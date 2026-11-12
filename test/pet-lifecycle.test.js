@@ -263,19 +263,19 @@ test('state changes drive the motion engine, hiding pauses it, and chat joy play
   assert.equal(r.animator.paused.at(-1), false)
 })
 
-test('dropping a tilted pet straightens it first, then ends the drag exactly once', async () => {
+test('dropping a tilted pet ends the drag at once and swings back to upright with a damped wobble', async () => {
   const r = await renderer()
-  r.evaluate('window.pet.drag = (phase) => globalThis.__drags.push(phase)')
-  r.evaluate('globalThis.__drags = []')
-  // 들고 있다가 200도 돌아간 상태에서 놓는다
-  r.evaluate("dragging = true; heldAngle = 200; let made = null; bodyEl.animate = (frames, options) => (made = { frames, options, cancel() {} }); globalThis.__anim = () => made")
-  r.evaluate("settleThenEndDrag(true)")
-  assert.equal(r.evaluate('JSON.stringify(globalThis.__drags)'), '[]', 'the window keeps its drag size while the pet straightens')
-  const anim = r.evaluate('globalThis.__anim()')
-  assert.equal(anim.frames[0].transform, 'rotate(-160.00deg)', 'turns back the short way')
-  r.evaluate('globalThis.__anim().onfinish()')
-  assert.equal(r.evaluate('JSON.stringify(globalThis.__drags)'), '["end"]')
-  // 되돌리는 중에 다시 잡으면 앞의 끌기를 먼저 끝낸다(중복 없이)
-  r.evaluate("heldAngle = 90; settleThenEndDrag(false); finishSettle(); finishSettle()")
-  assert.equal(r.evaluate('JSON.stringify(globalThis.__drags)'), '["end","end"]')
+  r.evaluate('globalThis.__drags = []; window.pet.drag = phase => globalThis.__drags.push(phase)')
+  r.evaluate('dragging = true; heldAngle = 200')
+  r.evaluate('settleThenEndDrag(true)')
+  assert.equal(r.evaluate('JSON.stringify(globalThis.__drags)'), '["end"]', 'the window no longer resizes, so the drag ends immediately')
+  // 첫 프레임은 가장 가까운 방향(-160도)에서 시작해 잦아든다
+  r.frame()
+  const first = r.evaluate('parseFloat(bodyEl.style.transform.replace("rotate(", ""))')
+  assert.ok(first < -150 && first > -161, `starts the short way (${first})`)
+  for (let i = 0; i < 80 && r.evaluate('settle !== null'); i++) { r.advance(16); r.frame() }
+  assert.equal(r.evaluate('settle'), null, 'settles')
+  assert.equal(r.evaluate('bodyEl.style.transform'), undefined)
+  r.evaluate('finishSettle(); finishSettle()')
+  assert.equal(r.evaluate('JSON.stringify(globalThis.__drags)'), '["end"]', 'no duplicate drag end')
 })

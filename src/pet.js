@@ -170,10 +170,19 @@ let spinnerTimer = null
 function placeSpinner() {
   const z = headZone()
   const size = spinner.offsetWidth || 46
-  const x = stage.offsetLeft + z.left + z.width / 2 - size / 2
-  // 창이 회전 여유만큼 커서 머리 위에 자리가 있다. 모자 꼭대기 바로 위에 띄운다.
-  const y = stage.offsetTop + z.top - size - 4
-  spinner.style.translate = `${Math.round(x - stage.offsetLeft)}px ${Math.round(Math.max(SPINNER_TOP_PX, y) - stage.offsetTop)}px`
+  let x
+  let y
+  if (bubbleOpen) {
+    // 말풍선이 머리 위를 덮으므로, 열려 있을 땐 머리 옆(작은 친구 반대쪽)에 띄운다.
+    const right = !cfg.flip
+    x = stage.offsetLeft + (right ? z.left + z.width + 6 : z.left - size - 6)
+    y = stage.offsetTop + z.top + z.height * 0.2
+  } else {
+    // 창이 회전 여유만큼 커서 머리 위에 자리가 있다. 모자 꼭대기 바로 위에 띄운다.
+    x = stage.offsetLeft + z.left + z.width / 2 - size / 2
+    y = Math.max(SPINNER_TOP_PX, stage.offsetTop + z.top - size - 4)
+  }
+  spinner.style.translate = `${Math.round(x - stage.offsetLeft)}px ${Math.round(y - stage.offsetTop)}px`
 }
 function showSpinner(on) {
   if (!layers) return
@@ -503,6 +512,7 @@ function showWaiting() {
 function openBubble() {
   if (cfg.chatEnabled === false) return
   bubbleOpen = true
+  if (!spinner.hidden) placeSpinner()
   window.pet.expand(true)
 }
 function closeBubble(immediate = false) {
@@ -635,49 +645,49 @@ let heldFrame = null
 let heldTick = null
 
 // ── 내려놓기 ───────────────────────────────────────────────────────────
-// 예전엔 손을 떼는 순간 기울어진 몸이 한 프레임에 똑바로 서고, 같은 순간 커져 있던 창이 줄어들었다.
-// 그 한 프레임이 다른 자리에 잔상처럼 보였다. 이제는 기울기를 짧게 되돌려 똑바로 선 뒤에
-// 끌기를 끝내서(창 줄이기) 회전한 그림이 줄어드는 창에 걸리지 않게 한다.
-const SETTLE_MS = 320 // 기울어진 몸이 똑바로 돌아오는 시간
+// 손을 떼면 기울어진 몸이 감쇠 진동으로 한두 번 살랑이며 똑바로 돌아오고, 동시에 몸이 착지하듯
+// 한 번 눌렸다 펴진다(.mover). 예전엔 되돌리기(키프레임)와 출렁임(boing)이 따로 이어 붙어 어색했다.
+// 창은 이제 크기가 바뀌지 않으므로 끌기는 놓는 즉시 끝낸다.
+const SETTLE_DECAY_S = 0.17 // 흔들림이 잦아드는 빠르기(작을수록 빨리 멈춤)
+const SETTLE_FREQ = 17 // 되돌아오며 살랑이는 빠르기(rad/s)
+const SETTLE_MAX_MS = 900
 const SWING_LIMIT_RAD = 0.6 // 자연스럽게: 약 34도
 const SWING_SMOOTHING = 0.55 // 자연스럽게: 손 속도를 이만큼 부드럽게 따라간다
 let heldAngle = 0
-let settle = null // { anim, done } 되돌리는 중
+let settle = null // { frame } 되돌리는 중
 
 /** -180~180도로: 여러 바퀴 돌았어도 가장 가까운 방향으로 돌아온다. */
 const shortestAngle = deg => ((((deg % 360) + 540) % 360) - 180)
 
 function finishSettle() {
   if (!settle) return
-  const { anim, done } = settle
+  if (settle.frame !== null) cancelAnimationFrame(settle.frame)
   settle = null
-  anim?.cancel()
-  done()
-}
-
-function endDrag(pointerUp) {
-  window.pet.drag('end')
-  if (pointerUp) boing(0.05) // 내려놓으면 한 번 출렁
+  bodyEl.style.removeProperty('transform')
+  bodyEl.style.removeProperty('transform-origin')
 }
 
 function settleThenEndDrag(pointerUp) {
-  const angle = shortestAngle(heldAngle)
+  const start = shortestAngle(heldAngle)
   const origin = bodyEl.style.transformOrigin
   heldAngle = 0
   stopHeldMotion()
-  if (cfg.reduceMotion || !visible || Math.abs(angle) < 0.5 || !bodyEl.animate) return endDrag(pointerUp)
+  window.pet.drag('end')
+  if (pointerUp) window.PetAnimator.bounce(0.05) // 착지하듯 한 번 꾹
+  if (cfg.reduceMotion || !visible || Math.abs(start) < 0.5) return
   bodyEl.style.transformOrigin = origin
-  const anim = bodyEl.animate(
-    [{ transform: `rotate(${angle.toFixed(2)}deg)` }, { transform: `rotate(${(-angle * 0.1).toFixed(2)}deg)`, offset: 0.7 }, { transform: 'rotate(0deg)' }],
-    { duration: SETTLE_MS, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', id: 'settle' },
-  )
-  const done = () => {
-    bodyEl.style.removeProperty('transform-origin')
-    endDrag(pointerUp)
+  const at0 = performance.now()
+  settle = { frame: null }
+  const tick = at => {
+    if (!settle) return
+    const t = (at - at0) / 1000
+    // 감쇠 진동: 놓은 각도에서 시작해(cos) 반대로 살짝 넘어갔다가 잦아든다.
+    const angle = start * Math.exp(-t / SETTLE_DECAY_S) * Math.cos(SETTLE_FREQ * t)
+    bodyEl.style.transform = `rotate(${angle.toFixed(3)}deg)`
+    if ((Math.abs(angle) < 0.15 && t > 0.15) || at - at0 > SETTLE_MAX_MS) return finishSettle()
+    settle.frame = requestAnimationFrame(tick)
   }
-  settle = { anim, done }
-  const finish = () => { if (settle?.anim === anim) { settle = null; done() } }
-  anim.onfinish = finish
+  settle.frame = requestAnimationFrame(tick)
 }
 
 function stopHeldMotion() {
@@ -837,6 +847,7 @@ window.addEventListener('pointerup', () => reportHover(true, false), true)
 window.pet.onLayout?.(applyWindowLayout)
 window.pet.onChatVisibility?.(state => {
   bubbleOpen = !!state.open
+  if (!spinner.hidden) placeSpinner() // 말풍선이 열리고 닫힘에 따라 머리 위 ↔ 옆
   if (!bubbleOpen) sound.stop()
 })
 window.pet.onChatStarted?.(() => {
@@ -870,6 +881,7 @@ function syncVisibility() {
     clearTimeout(flapTimer)
     if (down) release({ type: 'hidden' })
     stopHeldMotion()
+    finishSettle()
     pausedAnimations = document.getAnimations().filter(animation => animation.playState === 'running')
     for (const animation of pausedAnimations) animation.pause()
   } else {
