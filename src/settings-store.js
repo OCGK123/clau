@@ -59,9 +59,9 @@ const DEFAULTS = {
   petting: true, // 머리를 누르면 쓰다듬기
   dragEnabled: true,
   dragPhysics: true,
-  soundEnabled: false,
+  soundEnabled: true, // 처음부터 켜짐(병합 때 합의)
   soundVolume: 35,
-  pettingSound: 'chime',
+  pettingSound: 'squee', // 머리를 누르면 꺅
   talkingSound: 'soft',
   pettingSoundFile: null,
   talkingSoundFile: null,
