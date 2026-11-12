@@ -8,6 +8,7 @@ let appsInfo = null
 let loadingApps = false
 let saveQueue = Promise.resolve()
 const previewSound = PetSound.create()
+const previewFiles = ChatSound.create()
 
 // ── 탭 ─────────────────────────────────────────────────────────────────
 function showTab(name) {
@@ -62,6 +63,7 @@ function render() {
   el('opacityOut').textContent = `${cfg.opacity}%`
   el('soundVolumeOut').textContent = `${cfg.soundVolume}%`
   previewSound.configure(cfg)
+  previewFiles.configure(cfg)
 
   // 조건이 맞을 때만 보이는 줄
   for (const row of document.querySelectorAll('[data-when]')) {
@@ -82,7 +84,8 @@ function render() {
   el('trayHow').hidden = !cfg.tray
   el('trayHow').textContent = mac ? '메뉴 막대의 클로 아이콘 메뉴에서' : '트레이의 클로 아이콘 메뉴에서'
   el('dragPhysics').disabled = !cfg.dragEnabled || cfg.reduceMotion
-  for (const id of ['soundVolume', 'pettingSound', 'talkingSound']) el(id).disabled = !cfg.soundEnabled
+  for (const id of ['soundVolume', 'pettingSound', 'talkingSound', 'chatSound']) el(id).disabled = !cfg.soundEnabled
+  el('previewChat').disabled = !cfg.soundEnabled || !cfg.soundVolume || cfg.chatSound === false
   el('previewPetting').disabled = !cfg.soundEnabled || !cfg.soundVolume || cfg.pettingSound === 'none'
   el('previewTalking').disabled = !cfg.soundEnabled || !cfg.soundVolume || cfg.talkingSound === 'none'
 
@@ -153,7 +156,12 @@ el('targetAppSelect').addEventListener('change', () => {
   const app = appsInfo?.apps.find(app => appKey(app) === el('targetAppSelect').value)
   if (app) apply({ targetAppSelection: { kind: app.kind, id: app.id, label: app.label } })
 })
-el('previewPetting').addEventListener('click', () => { previewSound.unlock(); previewSound.pat() })
+el('previewPetting').addEventListener('click', () => {
+  // '꺅'은 녹음 파일, 나머지는 합성음
+  if (el('pettingSound').value === 'squee') previewFiles.preview('squee')
+  else { previewSound.unlock(); previewSound.pat() }
+})
+el('previewChat').addEventListener('click', () => previewFiles.preview('chatOpen'))
 el('previewTalking').addEventListener('click', () => { previewSound.unlock(); previewSound.talk() })
 window.addEventListener('beforeunload', () => previewSound.dispose())
 

@@ -27,7 +27,9 @@ const MOD_SOURCE = path.join(__dirname, '..', 'claude-mod')
 const MOD_DIR = path.join(CLAU_HOME, 'mod')
 const CLAUDE_SETTINGS = path.join(CLAUDE_HOME, 'settings.json')
 const BUST = 0.69 // 상반신 보기: 위에서부터 이만큼만 보인다
-const BUBBLE = { width: 340, height: 210 }
+// 말풍선 상자(최대 340px) 둘레에 여유를 둔다: 등장할 때 살짝 부풀어 넘치는 모양과 그림자가 창 끝에 잘리지 않도록.
+const BLUR_CLOSE_DELAY_MS = 80 // 포커스가 캐릭터 창으로 옮겨 가는 중인지 확인할 짧은 틈
+const BUBBLE = { width: 384, height: 234 }
 const HIDE_DELAY_MS = 200 // 포커스가 잠깐 비는 순간에 깜빡이지 않도록
 const LOCK_DWELL_MS = 600 // 고정 모드: 이만큼 마우스를 올려 두면 우클릭을 받는다
 const TESTING = !!process.env.CLAU_SHOT
@@ -195,7 +197,7 @@ function createBubble() {
   const me = new BrowserWindow({
     ...layout.bounds, show: false, frame: false, transparent: true, backgroundColor: '#00000000',
     resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
-    hasShadow: false, skipTaskbar: true, title: 'Clau Chat',
+    hasShadow: false, skipTaskbar: true, title: 'Clau Chat', acceptFirstMouse: true,
     ...(process.platform === 'win32' ? { type: 'toolbar' } : {}),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false },
   })
@@ -209,6 +211,16 @@ function createBubble() {
     if (bubbleWin !== me) return
     if (expanded && wantVisible()) { me.show(); me.focus() }
     me.webContents.send('chat:visibility', { open: expanded, layout: chatLayout() })
+  })
+  // 말풍선이 열린 채로 빈 곳(다른 앱 창 등)을 누르면 닫는다. 캐릭터를 누른 경우는
+  // 캐릭터 쪽 클릭이 열고 닫기를 맡으므로 여기서는 건드리지 않는다.
+  me.on('blur', () => {
+    setTimeout(() => {
+      if (bubbleWin !== me || !expanded) return
+      const focused = BrowserWindow.getFocusedWindow()
+      if (focused === me || focused === win) return
+      setChatOpen(false)
+    }, BLUR_CLOSE_DELAY_MS)
   })
   me.on('closed', () => {
     if (bubbleWin !== me) return
@@ -405,6 +417,8 @@ function createPet() {
     minimizable: false,
     fullscreenable: false,
     hasShadow: false,
+    // macOS: 다른 앱이 앞에 있어도 첫 클릭부터 받는다(없으면 머리 연타의 첫 탭이 창 활성화에 먹힌다).
+    acceptFirstMouse: true,
     skipTaskbar: !cfg.showInDock,
     // Windows에서는 도구 창으로 만들어 작업 표시줄과 Alt+Tab 목록에서 뺀다.
     ...(process.platform === 'win32' && !cfg.showInDock ? { type: 'toolbar' } : {}),

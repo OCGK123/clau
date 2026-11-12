@@ -1,71 +1,83 @@
-// The chat lives in its own fixed-size native window. Only SVG vertices change;
-// neither this window nor the character window resizes during the morph.
+// 대화는 크기가 고정된 별도 투명 창에 산다(캐릭터 창은 열고 닫을 때 크기·위치가 바뀌지 않는다).
+// 말풍선은 꼬리 끝(펫 머리)에서 작은 방울로 퐁 부풀어 젤리처럼 자리 잡고, 닫힐 땐 그 자리로 쏙 들어간다.
+// 애니메이션 자체는 bubble.css가 맡고, 여기서는 단계(phase)와 창 수명만 관리한다.
 const el = id => document.getElementById(id)
-const shell = el('shell')
-const shellPath = el('shellPath')
+const dialog = el('dialog')
 const answer = el('answer')
 const form = el('ask')
 const input = el('q')
 const send = el('send')
 const cancel = el('cancel')
 const close = el('closeBubble')
+const sound = window.ChatSound.create({ base: '../assets/sounds/' })
 const HINT = '안녕, 나 클로야! 뭐든 물어봐.'
-const MORPH_MS = 260
+const OPEN_MS = 460 // bubble.css bubble-in 길이와 맞춘다
+const CLOSE_MS = 240 // bubble.css bubble-out 길이와 맞춘다
+const TAIL_EDGE_PX = 22 // 꼬리가 둥근 모서리에 걸리지 않게
 
 let cfg = { bubbleSeconds: 30, reduceMotion: false, chatEnabled: true }
-let layout = { width: 340, height: 224, originX: 170, originY: 222, side: 'above' }
+let layout = { width: 384, height: 248, originX: 192, originY: 246, side: 'above' }
 let open = false
 let shown = document.visibilityState !== 'hidden'
 let busy = false
-let progress = 0
-let morph = null
-let morphFrame = null
+let phase = 'closed' // 'opening' | 'open' | 'closing' | 'closed'
+let phaseTimer = null
 let textFrame = null
 let pendingText = null
 let autoTimer = null
 let lastTouch = Date.now()
 let limitUntil = 0
+let replied = false // 이번 질문의 대답이 화면에 나타났는가(효과음 한 번만)
 
-function paint() {
-  shellPath.setAttribute('d', window.BubbleShape.path(window.BubbleShape.points(progress, layout)))
-}
 function contentReady(ready) { document.body.classList.toggle('ready', ready) }
-function stopMorph() {
-  if (morphFrame !== null) cancelAnimationFrame(morphFrame)
-  morphFrame = null
-  morph = null
+
+/** 꼬리를 펫 머리 쪽으로: originX는 창 기준, --tail-x는 말풍선 상자 기준. */
+function placeTail() {
+  const width = dialog.offsetWidth || Math.min(layout.width - 44, 340)
+  const left = (layout.width - width) / 2
+  const x = Math.min(Math.max(layout.originX - left, TAIL_EDGE_PX), width - TAIL_EDGE_PX)
+  dialog.style?.setProperty('--tail-x', `${Math.round(x)}px`)
 }
-function finishMorph(target) {
-  progress = target
-  stopMorph()
-  paint()
-  contentReady(open && target === 1)
-  if (open && target === 1 && shown) input.focus({ preventScroll: true })
-  if (!open && target === 0) window.pet.bubbleClosed?.()
+function applyLayout(next) {
+  layout = { ...layout, ...next }
+  document.body.classList.toggle('below', layout.side === 'below')
+  placeTail()
+}
+function setPhase(next) {
+  phase = next
+  clearTimeout(phaseTimer)
+  phaseTimer = null
+  document.body.classList.toggle('shown', next !== 'closed')
+  dialog.classList.toggle('opening', next === 'opening')
+  dialog.classList.toggle('closing', next === 'closing')
+}
+function finishOpen() {
+  setPhase('open')
+  contentReady(true)
+  if (shown) input.focus({ preventScroll: true })
+}
+function finishClose() {
+  setPhase('closed')
+  contentReady(false)
+  window.pet.bubbleClosed?.()
 }
 function animate(target, immediate = false) {
-  stopMorph()
+  if (target === 1) {
+    if (phase === 'open' || phase === 'opening') return
+    // 숨겨진 창(처음 만들어진 직후)에서는 보이기 시작할 때 애니메이션을 시작한다.
+    if (!shown && !immediate) return
+    placeTail()
+    if (immediate || cfg.reduceMotion) return finishOpen()
+    setPhase('opening')
+    void dialog.offsetWidth // 같은 클래스를 다시 붙여도 처음부터 재생되게
+    phaseTimer = setTimeout(finishOpen, OPEN_MS)
+    return
+  }
+  if (phase === 'closed' || phase === 'closing') return
   contentReady(false)
-  if (!shown && target === 1 && !immediate) {
-    paint() // A lazy-created native window is still hidden until main shows it.
-    return
-  }
-  if (immediate || cfg.reduceMotion || !shown || Math.abs(target - progress) < 0.0001) {
-    finishMorph(target)
-    return
-  }
-  morph = { from: progress, to: target, at: performance.now(), duration: MORPH_MS * Math.abs(target - progress) }
-  const tick = at => {
-    morphFrame = null
-    if (!morph || !shown) return
-    const t = Math.min(1, Math.max(0, (at - morph.at) / morph.duration))
-    const eased = 1 - Math.pow(1 - t, 3)
-    progress = morph.from + (morph.to - morph.from) * eased
-    paint()
-    if (t >= 1) finishMorph(morph.to)
-    else morphFrame = requestAnimationFrame(tick)
-  }
-  morphFrame = requestAnimationFrame(tick)
+  if (immediate || cfg.reduceMotion || !shown) return finishClose()
+  setPhase('closing')
+  phaseTimer = setTimeout(finishClose, CLOSE_MS)
 }
 function scheduleClose() {
   clearTimeout(autoTimer)
@@ -109,11 +121,7 @@ function waiting() {
   answer.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>'
 }
 function visibility(state) {
-  if (state.layout) {
-    layout = { ...layout, ...state.layout }
-    shell.setAttribute('viewBox', `0 0 ${layout.width} ${layout.height}`)
-    document.body.classList.toggle('below', layout.side === 'below')
-  }
+  if (state.layout) applyLayout(state.layout)
   const wasOpen = open
   open = !!state.open
   shown = document.visibilityState !== 'hidden'
@@ -121,7 +129,8 @@ function visibility(state) {
   if (open && !wasOpen) {
     lastTouch = Date.now()
     if (!answer.hasChildNodes()) showText(HINT, true)
-  }
+    sound.play('chatOpen')
+  } else if (!open && wasOpen) sound.play('chatClose')
   animate(open ? 1 : 0, !!state.immediate)
   scheduleClose()
 }
@@ -139,6 +148,8 @@ form.addEventListener('submit', event => {
   setBusy(true)
   waiting()
   touch()
+  replied = false
+  sound.play('chatEnter')
   window.pet.ask(question)
 })
 input.addEventListener('input', touch)
@@ -156,12 +167,7 @@ window.addEventListener('keydown', event => {
   if (event.key === 'Escape') requestClose()
 })
 window.pet.onChatVisibility?.(visibility)
-window.pet.onChatLayout?.(next => {
-  layout = { ...layout, ...next }
-  shell.setAttribute('viewBox', `0 0 ${layout.width} ${layout.height}`)
-  document.body.classList.toggle('below', layout.side === 'below')
-  paint()
-})
+window.pet.onChatLayout?.(applyLayout)
 window.pet.onChatStarted?.(() => { setBusy(true); waiting() })
 window.pet.onChatCancelled?.(() => {
   if (!busy) return
@@ -169,8 +175,15 @@ window.pet.onChatCancelled?.(() => {
   showText('잠깐 쉬었다가 다시 이야기하자.')
   touch()
 })
-window.pet.onDelta(text => { if (busy) { queueText(text); touch() } })
+/** 대답 글자가 처음 나타나는 순간 한 번 소리를 낸다. */
+function markReplied() {
+  if (replied) return
+  replied = true
+  sound.play('chatResult')
+}
+window.pet.onDelta(text => { if (busy) { markReplied(); queueText(text); touch() } })
 window.pet.onDone(text => {
+  markReplied() // 글자가 흘러나오지 않고 한 번에 와도 한 번은 울린다
   showText(text)
   setBusy(false)
   touch()
@@ -191,8 +204,10 @@ window.pet.onCleared(() => {
 })
 function configure(next) {
   cfg = next
+  sound.configure(cfg)
   document.body.classList.toggle('reduce-motion', cfg.reduceMotion)
-  if (cfg.reduceMotion && morph) finishMorph(open ? 1 : 0)
+  if (cfg.reduceMotion && phase === 'opening') finishOpen()
+  if (cfg.reduceMotion && phase === 'closing') finishClose()
   if (cfg.chatEnabled === false && open) requestClose()
   scheduleClose()
 }
@@ -200,8 +215,11 @@ window.pet.onCfg(configure)
 document.addEventListener('visibilitychange', () => {
   shown = document.visibilityState !== 'hidden'
   document.body.classList.toggle('is-hidden', !shown)
+  sound.setVisible(shown)
   if (!shown) {
-    stopMorph()
+    // 숨겨지면 애니메이션 중간 단계는 바로 끝맺는다(숨은 창에서 타이머를 돌리지 않는다).
+    if (phase === 'opening') finishOpen()
+    if (phase === 'closing') finishClose()
     clearTimeout(autoTimer)
     autoTimer = null
     if (textFrame !== null) cancelAnimationFrame(textFrame)
@@ -216,10 +234,10 @@ window.pet.init().then(init => {
   configure(init.cfg)
   if (init.chatVisibility) visibility(init.chatVisibility)
   else if (typeof init.chatOpen === 'boolean') visibility({ open: init.chatOpen, layout: init.chatLayout })
-  else paint()
+  else placeTail()
 })
 window.addEventListener('pagehide', () => {
-  stopMorph()
+  clearTimeout(phaseTimer)
   clearPendingText()
   clearTimeout(autoTimer)
 })

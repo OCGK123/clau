@@ -12,6 +12,9 @@ const sendBtn = el('send')
 const cancelBtn = el('cancel')
 const closeBtn = el('closeBubble')
 const sound = window.PetSound.create()
+const files = window.ChatSound.create() // 녹음 효과음: 꺅(쓰다듬기 선택 시), 대답을 마치고 신날 때
+const moverEl = el('mover')
+const spinner = el('spinner')
 
 const HEADROOM = 0.06 // 폴짝 뛸 때 잘리지 않게 위쪽에 두는 여백
 const HAPPY_MS = 2500
@@ -21,6 +24,7 @@ const PET_LINGER_MS = 650 // 손을 뗀 뒤에도 이만큼은 쓰다듬는 표�
 const STALE_MS = 10 * 60_000 // Claude Code 쪽 상태가 이보다 오래되면 믿지 않는다
 const DRAG_START_PX = 4
 const PAT_COMBO_MS = 600 // 이 안에 또 누르면 연타로 친다
+const REOPEN_GUARD_MS = 350 // 말풍선이 막 닫힌 직후의 클릭은 다시 열기로 보지 않는다
 const MAX_HEARTS = 8
 const HINT = '안녕, 나 클로야! 뭐든 물어봐.'
 const HEART = '<svg viewBox="0 0 20 18"><path d="M10 16.6C4.2 12.3 1.2 9.5 1.2 6a4.5 4.5 0 0 1 8.8-1.4A4.5 4.5 0 0 1 18.8 6c0 3.5-3 6.3-8.8 10.6z"/></svg>'
@@ -74,6 +78,8 @@ function build() {
   }
   make('buddy', buddyEl, '')
   for (const role of BODY_ROLES) make(role, bodyEl, role.startsWith('eyes') ? 'eyes' : role.startsWith('mouth') ? 'mouth' : '')
+  window.PetAnimator.attach(moverEl, imgs.buddy ?? null)
+  window.PetFx.attach(el('fx'))
 }
 
 function layout() {
@@ -99,6 +105,9 @@ function layout() {
   stage.classList.toggle('chat-enabled', cfg.chatEnabled !== false)
   stage.classList.toggle('drag-disabled', cfg.dragEnabled === false)
   document.body.classList.toggle('reduce-motion', cfg.reduceMotion)
+  window.PetAnimator.setUnit(petH / 100)
+  window.PetAnimator.setCalm(cfg.reduceMotion)
+  window.PetFx.setOff(cfg.reduceMotion)
   applyWindowLayout(geometry)
 
   const put = (node, [x, y, w, h]) => {
@@ -156,6 +165,48 @@ function headZone() {
   }
 }
 
+/** 창 기준 머리 한가운데: 반짝이를 띄울 자리. */
+function headPoint() {
+  const z = headZone()
+  return { x: stage.offsetLeft + z.left + z.width / 2, y: stage.offsetTop + z.top + z.height * 0.3 }
+}
+function fxAtHead(kind, count, spread) {
+  if (!layers || !visible) return
+  const p = headPoint()
+  window.PetFx.burst(p.x, p.y, kind, count, spread)
+}
+
+// ── 생각 중 로딩 표시 ──────────────────────────────────────────────────
+// 캐릭터 창은 캐릭터 크기에 꼭 맞아서 머리 위로는 그릴 자리가 없다. 그래서 모자 꼭대기 바로 위,
+// 창 안쪽 끝에 붙여 띄운다(머리와 살짝 겹칠 수 있다).
+const SPINNER_OUT_MS = 180 // pet.css spinner-out 길이와 맞춘다
+const SPINNER_TOP_PX = 3 // 창 위쪽 끝에 붙어 살이 잘리지 않게
+let spinnerTimer = null
+function placeSpinner() {
+  const z = headZone()
+  const size = spinner.offsetWidth || 28
+  const x = stage.offsetLeft + z.left + z.width / 2 - size / 2
+  const y = stage.offsetTop + z.top - size * 0.75
+  spinner.style.translate = `${Math.round(x - stage.offsetLeft)}px ${Math.round(Math.max(SPINNER_TOP_PX, y) - stage.offsetTop)}px`
+}
+function showSpinner(on) {
+  if (!layers) return
+  clearTimeout(spinnerTimer)
+  if (on) {
+    spinner.classList.remove('leaving')
+    if (spinner.hidden) {
+      spinner.hidden = false
+      placeSpinner()
+    }
+  } else if (!spinner.hidden && !spinner.classList.contains('leaving')) {
+    spinner.classList.add('leaving')
+    spinnerTimer = setTimeout(() => {
+      spinner.hidden = true
+      spinner.classList.remove('leaving')
+    }, SPINNER_OUT_MS)
+  }
+}
+
 function onHead(e) {
   if (!cfg.petting) return false
   const box = stage.getBoundingClientRect()
@@ -181,6 +232,9 @@ function setMode(next) {
   if (next === mode) return
   mode = next
   petEl.className = petEl.className.replace(/\bmode-\S+/g, '').trim() + ` mode-${mode}`
+  window.PetAnimator.setMode(mode)
+  if (mode === 'happy') fxAtHead('sparkle', 6, 1.8)
+  showSpinner(mode === 'thinking')
   applyFace()
 }
 
@@ -188,6 +242,7 @@ function applyFace() {
   if (!cfg || !layers) return
   clearTimeout(blinkTimer)
   clearTimeout(flapTimer)
+  clearBlinkFx()
   const eyes = { held: 'x', thinking: 'closed', sleeping: 'closed', dozing: 'closed', happy: 'happy', pleased: 'happy', oops: 'x', petted: 'petted' }[mode] ?? 'open'
   const mouth = { sleeping: 'sleep', oops: 'sleep' }[mode] ?? 'closed'
   const changed = petEl.dataset.eyes !== eyes
@@ -205,33 +260,46 @@ function applyFace() {
 function scheduleBlink() {
   blinkTimer = setTimeout(() => blink(Math.random() < 0.25 ? 2 : 1), rand(1800, 5000))
 }
-/** 눈꺼풀이 눌리듯 감겼다가, 살짝 더 크게 뜨고 쫀득하게 제자리로 돌아온다. */
+const BLINK_CLOSE_MS = 70 // pet.css lid-close 길이와 맞춘다
+const BLINK_OPEN_MS = 130 // pet.css lid-open 길이와 맞춘다
+function clearBlinkFx() {
+  petEl.classList.remove('lid-closing', 'lid-opening')
+}
+/** 같은 클래스를 다시 붙여도 애니메이션이 처음부터 돌도록 스타일을 한 번 확정시킨다. */
+function restartFx(cls) {
+  clearBlinkFx()
+  void petEl.offsetWidth
+  petEl.classList.add(cls)
+}
+/**
+ * 눈꺼풀이 위에서 빠르게 내려와 덮고(감기), 조금 느리게 걷힌다(뜨기).
+ * 눈 그림 자체는 찌그러뜨리지 않는다: 부풀어 보이거나 몸 전체가 움찔해 보이던 원인이었다.
+ */
 function blink(times) {
   if (!visible) return
-  const calm = cfg.reduceMotion
-  play(imgs.eyes_open, [{ transform: 'scale(1, 1)' }, { transform: 'scale(1.06, 0.2)' }], 80, 'ease-in')
-  blinkTimer = setTimeout(
-    () => {
-      petEl.dataset.eyes = 'closed'
-      play(imgs.eyes_closed, [{ transform: 'scale(1.05, 0.6)' }, { transform: 'scale(1, 1)' }], 90)
+  if (cfg.reduceMotion) {
+    petEl.dataset.eyes = 'closed'
+    blinkTimer = setTimeout(() => {
+      petEl.dataset.eyes = 'open'
+      if (times > 1) blinkTimer = setTimeout(() => blink(times - 1), rand(120, 200))
+      else scheduleBlink()
+    }, rand(100, 160))
+    return
+  }
+  restartFx('lid-closing')
+  blinkTimer = setTimeout(() => {
+    clearBlinkFx()
+    petEl.dataset.eyes = 'closed'
+    blinkTimer = setTimeout(() => {
+      petEl.dataset.eyes = 'open'
+      restartFx('lid-opening')
       blinkTimer = setTimeout(() => {
-        petEl.dataset.eyes = 'open'
-        play(
-          imgs.eyes_open,
-          [
-            { transform: 'scale(1.06, 0.2)' },
-            { transform: 'scale(0.965, 1.14)', offset: 0.46 },
-            { transform: 'scale(1.02, 0.95)', offset: 0.74 },
-            { transform: 'scale(1, 1)' },
-          ],
-          320,
-        )
-        if (times > 1) blinkTimer = setTimeout(() => blink(times - 1), rand(150, 230))
+        clearBlinkFx()
+        if (times > 1) blinkTimer = setTimeout(() => blink(times - 1), rand(60, 110))
         else scheduleBlink()
-      }, rand(70, 130))
-    },
-    calm ? 0 : 75,
-  )
+      }, BLINK_OPEN_MS)
+    }, rand(35, 60))
+  }, BLINK_CLOSE_MS)
 }
 
 /** 말하는 동안: 입이 랜덤한 간격으로 열렸다 닫히고, 가끔 단어 사이처럼 잠깐 쉰다. */
@@ -372,12 +440,15 @@ function startPetting() {
 }
 
 /** 한 번 톡: 누를 때마다 몸이 꾹 눌렸다 튀어 오르고, 연달아 누를수록 더 깊게 눌린다. */
-function pat() {
+function pat(e) {
   const now = performance.now()
   pats = now - lastPat < PAT_COMBO_MS ? pats + 1 : 1
   lastPat = now
   startPetting()
-  sound.pat(pats)
+  window.PetAnimator.restart() // 연타할 때마다 말랑 동작이 처음부터 다시
+  if (e) window.PetFx.burst(e.clientX, e.clientY, 'sparkle', 3, 0.8)
+  if (cfg.pettingSound === 'squee') files.play('squee')
+  else sound.pat(pats)
   boing(0.055 + 0.05 * (Math.min(pats, 8) / 8))
   play(imgs.eyes_petted, [{ transform: 'scale(1.1, 0.72)' }, { transform: 'scale(0.96, 1.1)', offset: 0.5 }, { transform: 'scale(1, 1)' }], 260)
   heart()
@@ -426,6 +497,7 @@ let busy = false
 let speechStartedAt = null
 let lastTouch = Date.now()
 let bubbleOpen = false
+let happyTimer = null
 const touch = () => { lastTouch = Date.now(); if (!busy) scheduleStateUpdate() }
 
 function showHint() {
@@ -477,6 +549,7 @@ form.addEventListener('submit', e => {
 })
 
 function finish() {
+  clearTimeout(happyTimer)
   busy = false
   sendBtn.disabled = false
   cancelBtn.hidden = true
@@ -502,7 +575,11 @@ window.pet.onDone(text => {
   if (remaining > 0 && bubbleOpen && visible && cfg.chatEnabled !== false) {
     setLocal('talking', remaining, 'happy')
     sound.talk()
-  } else setLocal('happy', HAPPY_MS)
+    happyTimer = setTimeout(() => files.play('chatHappy'), remaining) // 말하기가 끝나고 ^^ 폴짝할 때
+  } else {
+    setLocal('happy', HAPPY_MS)
+    files.play('chatHappy')
+  }
 })
 window.pet.onError(message => {
   if (!busy) return
@@ -608,7 +685,7 @@ stage.addEventListener('pointerdown', e => {
   down = { x: e.screenX, y: e.screenY, clientX: e.clientX, clientY: e.clientY, at: e.timeStamp, head, pointerId: e.pointerId }
   dragging = false
   stage.setPointerCapture(e.pointerId)
-  if (head) pat()
+  if (head) pat(e)
 })
 stage.addEventListener('pointermove', e => {
   if (!cfg) return
@@ -622,7 +699,7 @@ stage.addEventListener('pointermove', e => {
     if (e.timeStamp - lastRub > 320) {
       lastRub = e.timeStamp
       heart()
-      sound.pat(pats)
+      if (cfg.pettingSound !== 'squee') sound.pat(pats)
     }
     return
   }
@@ -656,8 +733,9 @@ const release = e => {
     if (e.type === 'pointerup') boing(0.05) // 내려놓으면 한 번 출렁
   } else if (e.type === 'pointerup' && cfg.chatEnabled !== false && (!locked || cfg.lockedChat)) {
     wake()
-    if (!bubbleOpen) openBubble()
-    else closeBubble()
+    // 바깥을 눌러 막 닫힌 순간의 같은 클릭이면 다시 열지 않는다(닫기 → 열기 깜빡임 방지).
+    if (!bubbleOpen && performance.now() - chatClosedAt > REOPEN_GUARD_MS) openBubble()
+    else if (bubbleOpen) closeBubble()
   }
   dragging = false
   recompute()
@@ -690,7 +768,9 @@ input.addEventListener('input', touch)
 
 // ── 시작 ───────────────────────────────────────────────────────────────
 window.pet.onLayout?.(applyWindowLayout)
+let chatClosedAt = -Infinity
 window.pet.onChatVisibility?.(state => {
+  if (bubbleOpen && !state.open) chatClosedAt = performance.now()
   bubbleOpen = !!state.open
   if (!bubbleOpen) sound.stop()
 })
@@ -716,6 +796,8 @@ function syncVisibility() {
   visible = next
   document.body.classList.toggle('is-hidden', !visible)
   sound.setVisible(visible)
+  files.setVisible(visible)
+  window.PetAnimator.setPaused(!visible)
   if (!visible) {
     clearTimeout(stateTimer)
     stateTimer = null
@@ -738,6 +820,7 @@ function syncVisibility() {
 window.pet.onCfg(next => {
   cfg = next
   sound.configure(cfg)
+  files.configure(cfg)
   if (down && (cfg.locked || cfg.dragEnabled === false || (down.head && !cfg.petting))) release({ type: 'settings' })
   if (cfg.reduceMotion || cfg.dragPhysics === false) stopHeldMotion()
   if (cfg.chatEnabled === false) closeBubble(true)
@@ -754,6 +837,7 @@ window.pet.onClaudeCode(state => {
 window.pet.init().then(init => {
   cfg = init.cfg
   sound.configure(cfg)
+  files.configure(cfg)
   layers = init.layers
   bust = init.bust
   cc = init.ccState

@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' file: data:" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' file: data:; media-src 'self' file:" />
     <title>Clau</title>
     <link rel="stylesheet" href="pet.css" />
   </head>
@@ -21,11 +21,17 @@
     <div id="stage" tabindex="0" role="button" aria-label="클로와 대화하기. 머리를 누르면 쓰다듬고, 몸을 끌면 옮겨요.">
       <div id="pet" class="mode-idle" data-eyes="open" data-mouth="closed">
         <div class="buddy-float" id="buddy"></div>
-        <div class="body" id="body"></div>
+        <!-- .mover: 상태별 몸짓(pet-animator.js). .body: 쓰다듬기 boing·집어 들기 진자(pet.js). 둘이 겹쳐도 합쳐진다 -->
+        <div class="mover" id="mover"><div class="body" id="body"></div></div>
         <span class="z z1">z</span><span class="z z2">z</span><span class="z z3">z</span>
       </div>
+      <div id="spinner" hidden role="status" aria-label="생각 중"><svg viewBox="-12 -12 24 24" width="28" height="28"><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(0)" style="animation-delay:-1.000s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(30)" style="animation-delay:-0.917s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(60)" style="animation-delay:-0.833s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(90)" style="animation-delay:-0.750s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(120)" style="animation-delay:-0.667s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(150)" style="animation-delay:-0.583s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(180)" style="animation-delay:-0.500s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(210)" style="animation-delay:-0.417s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(240)" style="animation-delay:-0.333s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(270)" style="animation-delay:-0.250s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(300)" style="animation-delay:-0.167s" /><rect x="-1.6" y="-11" width="3.2" height="6" rx="1.6" transform="rotate(330)" style="animation-delay:-0.083s" /></svg></div>
     </div>
+    <div id="fx" aria-hidden="true"></div>
     <script src="pet-motion.js"></script>
+    <script src="pet-animator.js"></script>
+    <script src="pet-fx.js"></script>
+    <script src="chat-sound.js"></script>
     <script src="pet-sound.js"></script>
     <script src="pet.js"></script>
   </body>

@@ -2,12 +2,11 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self'; media-src 'self' file:" />
     <title>클로와 대화</title>
     <link rel="stylesheet" href="bubble.css" />
   </head>
   <body>
-    <svg id="shell" viewBox="0 0 340 224" aria-hidden="true"><path id="shellPath" /></svg>
     <section id="dialog" aria-label="클로와 대화">
       <div class="bubble-head"><span>클로와 대화</span><button id="closeBubble" type="button" aria-label="말풍선 닫기" title="닫기 (Esc)">×</button></div>
       <div id="answer" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -17,7 +16,7 @@
         <button id="send" type="submit" aria-label="보내기"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 13V3.5M3.8 7.4 8 3.2l4.2 4.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
       </form>
     </section>
-    <script src="bubble-shape.js"></script>
+    <script src="chat-sound.js"></script>
     <script src="bubble.js"></script>
   </body>
 </html>

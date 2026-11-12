@@ -60,6 +60,7 @@ const DEFAULTS = {
   soundVolume: 35,
   pettingSound: 'chime',
   talkingSound: 'soft',
+  chatSound: true, // 말풍선 열기·닫기·보내기·대답·신남 효과음(효과음 켜기가 켜져 있을 때)
   dozeMinutes: 3, // 이만큼 조용하면 졸기. 0이면 졸지 않음
   reduceMotion: false, // 움직임 줄이기
 
@@ -106,7 +107,7 @@ function normalize(raw) {
   }
   next.dozeMinutes = clampInt(next.dozeMinutes, 0, 120, DEFAULTS.dozeMinutes)
   next.soundVolume = clampInt(next.soundVolume, 0, 100, DEFAULTS.soundVolume)
-  next.pettingSound = pick(next.pettingSound, ['none', 'chime', 'pop'], DEFAULTS.pettingSound)
+  next.pettingSound = pick(next.pettingSound, ['none', 'chime', 'pop', 'squee'], DEFAULTS.pettingSound)
   next.talkingSound = pick(next.talkingSound, ['none', 'soft', 'type'], DEFAULTS.talkingSound)
   next.targetApp = (typeof next.targetApp === 'string' && next.targetApp.trim().toLowerCase()) || DEFAULTS.targetApp
   if (typeof next.claudePath !== 'string') next.claudePath = ''

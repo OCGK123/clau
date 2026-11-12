@@ -20,6 +20,8 @@ async function renderer({ hidden = false } = {}) {
       this.value = ''
       this.textContent = ''
       this.scrollHeight = 0
+      this.vars = {}
+      this.style = { setProperty: (key, value) => { this.vars[key] = value } }
       this.classList = { toggle: (key, active) => active ? this.classes.add(key) : this.classes.delete(key), remove: key => this.classes.delete(key), contains: key => this.classes.has(key) }
     }
     setAttribute(key, value) { this.attributes[key] = value }
@@ -27,12 +29,15 @@ async function renderer({ hidden = false } = {}) {
     hasChildNodes() { return !!this.textContent || !!this.innerHTML }
     focus() {}
   }
-  const elements = Object.fromEntries(['shell', 'shellPath', 'answer', 'ask', 'q', 'send', 'cancel', 'closeBubble'].map(name => [name, new Element()]))
+  const elements = Object.fromEntries(['dialog', 'answer', 'ask', 'q', 'send', 'cancel', 'closeBubble'].map(name => [name, new Element()]))
   const document = { body: new Element(), visibilityState: hidden ? 'hidden' : 'visible', listeners: {}, getElementById: name => elements[name], addEventListener(key, fn) { this.listeners[key] = fn } }
   const pet = { expand: value => requests.push(value), bubbleClosed: () => closed++, ask: value => requests.push(value), cancel() {}, init: () => Promise.resolve({ cfg: { bubbleSeconds: 30, reduceMotion: false, chatEnabled: true }, chatOpen: false }) }
   for (const key of ['ChatVisibility', 'ChatLayout', 'ChatStarted', 'ChatCancelled', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Cfg']) pet[`on${key}`] = fn => { callbacks[key] = fn }
   class ClockDate extends Date { static now() { return now } }
-  const context = vm.createContext({ window: { pet, BubbleShape: require('../src/bubble-shape'), addEventListener() {} }, document, Date: ClockDate, performance: { now: () => now },
+  const played = []
+  class Audio { constructor(src) { this.src = src } play() { played.push(this.src.split('/').pop()); return Promise.resolve() } pause() {} }
+  const ChatSound = { create: options => require('../src/chat-sound').create({ ...options, Audio }) }
+  const context = vm.createContext({ window: { pet, ChatSound, addEventListener() {} }, document, Date: ClockDate, performance: { now: () => now },
     setTimeout: (fn, delay) => { const key = ++id; timers.set(key, { at: now + delay, fn }); return key }, clearTimeout: key => timers.delete(key),
     requestAnimationFrame: fn => { const key = ++id; frames.set(key, fn); return key }, cancelAnimationFrame: key => frames.delete(key),
   })
@@ -51,37 +56,31 @@ async function renderer({ hidden = false } = {}) {
     now = until
   }
   function frame() { for (const [key, fn] of [...frames]) { frames.delete(key); fn(now) } }
-  const layout = { width: 340, height: 224, originX: 170, originY: 222, side: 'above' }
+  const layout = { width: 384, height: 248, originX: 192, originY: 246, side: 'above' }
   function open() { callbacks.ChatVisibility({ open: true, layout }) }
-  function finishOpen() { open(); advance(260); frame() }
-  return { evaluate, callbacks, elements, document, advance, frame, frames, timers, requests, layout, open, finishOpen, closed: () => closed }
+  function finishOpen() { open(); advance(460) }
+  return { evaluate, callbacks, elements, document, advance, frame, frames, timers, requests, layout, open, finishOpen, played, closed: () => closed }
 }
 
-test('the SVG path geometry itself morphs, and native hiding waits until closing completes', async () => {
+test('the bubble pops open from the tail, and native hiding waits until closing completes', async () => {
   const r = await renderer()
   const initialClosed = r.closed()
   r.open()
-  r.frame()
-  const start = r.elements.shellPath.attributes.d
-  r.advance(130)
-  r.frame()
-  const middle = r.elements.shellPath.attributes.d
-  assert.notEqual(middle, start)
-  assert.ok(r.evaluate('progress > 0 && progress < 1'))
+  assert.equal(r.evaluate('phase'), 'opening')
+  assert.equal(r.elements.dialog.classList.contains('opening'), true)
+  assert.equal(r.document.body.classList.contains('shown'), true)
   assert.equal(r.document.body.classList.contains('ready'), false)
-  r.advance(130)
-  r.frame()
-  assert.notEqual(r.elements.shellPath.attributes.d, middle)
+  r.advance(460)
+  assert.equal(r.evaluate('phase'), 'open')
   assert.equal(r.document.body.classList.contains('ready'), true)
-  assert.equal(r.frames.size, 0)
   r.callbacks.ChatVisibility({ open: false })
-  r.advance(259)
-  r.frame()
+  assert.equal(r.elements.dialog.classList.contains('closing'), true)
+  r.advance(239)
   assert.equal(r.closed(), initialClosed)
   r.advance(1)
-  r.frame()
   assert.equal(r.closed(), initialClosed + 1)
-  assert.equal(r.evaluate('progress'), 0)
+  assert.equal(r.evaluate('phase'), 'closed')
+  assert.equal(r.document.body.classList.contains('shown'), false)
 })
 
 test('reopening cancels an in-flight close without a stale hide acknowledgement', async () => {
@@ -89,38 +88,45 @@ test('reopening cancels an in-flight close without a stale hide acknowledgement'
   r.finishOpen()
   const initialClosed = r.closed()
   r.callbacks.ChatVisibility({ open: false })
-  r.advance(130)
-  r.frame()
+  r.advance(120)
   r.open()
-  r.advance(260)
-  r.frame()
+  r.advance(460)
   assert.equal(r.closed(), initialClosed)
-  assert.equal(r.evaluate('progress'), 1)
+  assert.equal(r.evaluate('phase'), 'open')
   assert.equal(r.document.body.classList.contains('ready'), true)
 })
 
-test('a lazy hidden first open waits for native visibility before starting the real morph', async () => {
+test('a lazy hidden first open waits for native visibility before starting the animation', async () => {
   const r = await renderer({ hidden: true })
   r.open()
-  assert.equal(r.evaluate('progress'), 0)
-  assert.equal(r.frames.size, 0)
+  assert.equal(r.evaluate('phase'), 'closed')
   assert.equal(r.timers.size, 0)
   r.document.visibilityState = 'visible'
   r.document.listeners.visibilitychange()
-  assert.equal(r.frames.size, 1)
-  r.advance(130)
-  r.frame()
-  assert.ok(r.evaluate('progress > 0 && progress < 1'))
+  assert.equal(r.evaluate('phase'), 'opening')
 })
 
-test('layout-only updates move tail geometry without replaying morph or hiding content', async () => {
+test('layout-only updates move the tail without replaying the animation or hiding content', async () => {
   const r = await renderer()
   r.finishOpen()
-  const before = r.elements.shellPath.attributes.d
+  const before = r.elements.dialog.vars['--tail-x']
   r.callbacks.ChatLayout({ ...r.layout, originX: 55 })
-  assert.notEqual(r.elements.shellPath.attributes.d, before)
-  assert.equal(r.frames.size, 0)
+  assert.notEqual(r.elements.dialog.vars['--tail-x'], before)
+  assert.equal(r.evaluate('phase'), 'open')
   assert.equal(r.document.body.classList.contains('ready'), true)
+})
+
+test('chat sounds play once each: open, send, first reply, close', async () => {
+  const r = await renderer()
+  r.evaluate("configure({ bubbleSeconds: 30, reduceMotion: false, chatEnabled: true, soundEnabled: true, soundVolume: 50, chatSound: true })")
+  r.finishOpen()
+  r.elements.q.value = '안녕'
+  r.elements.ask.listeners.submit({ preventDefault() {}, isComposing: false })
+  r.callbacks.Delta('안')
+  r.callbacks.Delta('안녕!')
+  r.callbacks.Done('안녕! 반가워.')
+  r.callbacks.ChatVisibility({ open: false })
+  assert.deepEqual(r.played, ['chat-open.mp3', 'chat-enter.mp3', 'chat-result.mp3', 'chat-close.mp3'])
 })
 
 test('auto-close waits for inactivity, preserves drafts, and never closes on a slow final answer', async () => {

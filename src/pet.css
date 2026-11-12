@@ -122,45 +122,72 @@ body {
   stroke-linejoin: round;
 }
 
-/* 상태별 몸짓 */
-#pet.mode-idle .body {
-  animation: breathe 4.4s ease-in-out infinite;
+/* 상태별 몸짓(숨쉬기, 말하기, 폴짝, 말랑…)은 pet-animator.js가 .mover와 작은 친구에 매 프레임 계산한다.
+   상태가 바뀔 때 지금 모습에서 새 동작으로 이어지도록 CSS 키프레임 대신 엔진을 쓴다. */
+.mover {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 100%;
 }
-#pet.mode-talking .body {
-  animation: bob 0.34s ease-in-out infinite alternate;
+/* 레이어를 처음부터 고정해 둔다: 깜빡임처럼 안쪽 그림에 애니메이션이 붙었다 떨어질 때
+   레이어가 새로 생기고 지워지면서 캐릭터 전체가 1px씩 움찔하던 현상을 막는다. */
+.mover,
+.body,
+.buddy-float img,
+#pet .eyes,
+#pet .mouth {
+  will-change: transform;
+  backface-visibility: hidden;
 }
-#pet.mode-working .buddy-float img {
-  animation: hop 0.5s ease-in-out infinite;
+
+/* 깜빡임: 눈 그림은 찌그러뜨리지 않고, 눈꺼풀이 위에서 내려와 덮었다가 위로 걷힌다 */
+#pet.lid-closing [data-role='eyes_open'] {
+  animation: lid-close 70ms cubic-bezier(0.5, 0, 0.9, 0.5) forwards;
 }
-#pet.mode-happy .body {
-  animation: jump 0.45s ease-out 2;
+#pet.lid-opening [data-role='eyes_open'] {
+  animation: lid-open 130ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-#pet.mode-happy .buddy-float img {
-  animation: hop 0.4s ease-out 4;
+@keyframes lid-close {
+  from { clip-path: inset(0 0 0 0); }
+  to { clip-path: inset(58% 0 0 0); }
 }
-#pet.mode-oops .body {
-  animation: shake 0.09s linear 8;
+@keyframes lid-open {
+  from { clip-path: inset(55% 0 0 0); }
+  to { clip-path: inset(0 0 0 0); }
 }
-#pet.mode-oops .buddy-float img {
-  animation: tilt 0.3s ease-in-out 3;
+
+/* 생각 중: 머리 위 로딩 표시(12갈래 살이 차례로 진해졌다 옅어지며 돈다) */
+#spinner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  width: 28px;
+  height: 28px;
+  pointer-events: none;
+  --spoke: #5f5e59;
+  animation: spinner-in 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
-/* 쓰다듬는 중: 위아래로 말랑말랑 */
-#pet.mode-petted .body {
-  animation: squish 0.52s ease-in-out infinite;
+@media (prefers-color-scheme: dark) {
+  #spinner { --spoke: #d6d4cc; }
 }
-#pet.mode-petted .buddy-float img {
-  animation: hop 0.52s ease-in-out infinite;
+#spinner[hidden] { display: none; }
+#spinner.leaving { animation: spinner-out 180ms cubic-bezier(0.4, 0, 1, 1) both; }
+#spinner svg { display: block; overflow: visible; }
+#spinner rect { fill: var(--spoke); animation: spoke-fade 1s steps(12, end) infinite; }
+@keyframes spoke-fade { 0% { opacity: 1; } 100% { opacity: 0.22; } }
+@keyframes spinner-in { from { scale: 0; opacity: 0; } to { scale: 1; opacity: 1; } }
+@keyframes spinner-out { from { scale: 1; opacity: 1; } to { scale: 0.4; opacity: 0; } }
+
+/* 반짝이 이펙트 층(pet-fx.js): 창 전체를 덮지만 마우스는 통과한다 */
+#fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 5;
 }
-/* 손을 뗀 직후: 한 번 출렁이고 가라앉는다 */
-#pet.mode-pleased .body {
-  animation: settle 0.6s ease-out 1;
-}
-#pet.mode-dozing .body {
-  animation: breathe 5s ease-in-out infinite;
-}
-#pet.mode-sleeping .body {
-  animation: breathe 4s ease-in-out infinite;
-}
+
 /* Held motion is input-driven in pet-motion.js, never a looping animation. */
 #stage.dragging .body {
   animation: none !important;
@@ -207,43 +234,6 @@ body {
 @keyframes float-tilt {
   from { rotate: -2.2deg; }
   to { rotate: 2.2deg; }
-}
-@keyframes squish {
-  0%, 100% { transform: scale(1, 1); }
-  28% { transform: scale(1.05, 0.925); }
-  58% { transform: scale(0.972, 1.032); }
-  80% { transform: scale(1.014, 0.984); }
-}
-@keyframes settle {
-  0% { transform: scale(1.04, 0.95); }
-  35% { transform: scale(0.975, 1.03); }
-  65% { transform: scale(1.012, 0.988); }
-  100% { transform: scale(1, 1); }
-}
-@keyframes bob {
-  from { transform: translateY(0); }
-  to { transform: translateY(calc(var(--u) * -0.9)); }
-}
-@keyframes hop {
-  0%, 100% { transform: translateY(0); }
-  45% { transform: translateY(calc(var(--u) * -4)); }
-}
-@keyframes jump {
-  0%, 100% { transform: translateY(0); }
-  40% { transform: translateY(calc(var(--u) * -3.5)); }
-}
-@keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(calc(var(--u) * -1.2)); }
-  75% { transform: translateX(calc(var(--u) * 1.2)); }
-}
-@keyframes tilt {
-  0%, 100% { transform: rotate(0); }
-  50% { transform: rotate(-12deg); }
-}
-@keyframes breathe {
-  0%, 100% { transform: scale(1, 1); }
-  50% { transform: scale(1.012, 0.988); }
 }
 @keyframes zz {
   0% { opacity: 0; transform: translate(0, 0); }
