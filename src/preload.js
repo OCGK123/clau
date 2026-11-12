@@ -6,6 +6,7 @@ const on = (channel, fn) => ipcRenderer.on(channel, (_e, ...args) => fn(...args)
 contextBridge.exposeInMainWorld('pet', {
   init: () => ipcRenderer.invoke('pet:init'),
   expand: open => ipcRenderer.send('pet:expand', open),
+  hover: (over, held) => ipcRenderer.send('pet:hover', over, held),
   bubbleClosed: () => ipcRenderer.send('chat:closed'),
   menu: () => ipcRenderer.send('pet:menu'),
   drag: (phase, dx = 0, dy = 0) => ipcRenderer.send('pet:drag', phase, dx, dy),

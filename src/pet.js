@@ -164,8 +164,7 @@ function fxAtHead(kind, count, spread) {
 }
 
 // ── 생각 중 로딩 표시 ──────────────────────────────────────────────────
-// 캐릭터 창은 캐릭터 크기에 꼭 맞아서 머리 위로는 그릴 자리가 없다. 그래서 모자 꼭대기 바로 위,
-// 창 안쪽 끝에 붙여 띄운다(머리와 살짝 겹칠 수 있다).
+// 캐릭터 창은 회전 여유만큼 커서 머리 위에 자리가 있다. 창 위쪽 끝을 넘지는 않게 한다.
 const SPINNER_OUT_MS = 180 // pet.css spinner-out 길이와 맞춘다
 const SPINNER_TOP_PX = 3 // 창 위쪽 끝에 붙어 살이 잘리지 않게
 let spinnerTimer = null
@@ -173,7 +172,8 @@ function placeSpinner() {
   const z = headZone()
   const size = spinner.offsetWidth || 46
   const x = stage.offsetLeft + z.left + z.width / 2 - size / 2
-  const y = stage.offsetTop + z.top - size * 0.75
+  // 창이 회전 여유만큼 커서 머리 위에 자리가 있다. 모자 꼭대기 바로 위에 띄운다.
+  const y = stage.offsetTop + z.top - size - 4
   spinner.style.translate = `${Math.round(x - stage.offsetLeft)}px ${Math.round(Math.max(SPINNER_TOP_PX, y) - stage.offsetTop)}px`
 }
 function showSpinner(on) {
@@ -813,6 +813,24 @@ input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.isComposing) e.preventDefault()
 })
 input.addEventListener('input', touch)
+
+// ── 마우스 받기 알림 ───────────────────────────────────────────────────
+// 캐릭터 창은 회전 여유만큼 캐릭터보다 크고, 빈 자리는 마우스가 통과한다.
+// 캐릭터에 닿았는지·누르고 있는지를 main에 알려 즉시 받게 한다.
+let hoverSent = null
+function reportHover(over, held = !!down) {
+  const key = `${over}/${held}`
+  if (key === hoverSent) return
+  hoverSent = key
+  window.pet.hover?.(over, held)
+}
+document.addEventListener('mousemove', e => {
+  const t = e.target instanceof Element ? e.target : null
+  reportHover(!!t && stage.contains(t))
+})
+document.addEventListener('mouseleave', () => { if (!down) reportHover(false) })
+stage.addEventListener('pointerdown', () => reportHover(true, true), true)
+window.addEventListener('pointerup', () => reportHover(true, false), true)
 
 // ── 시작 ───────────────────────────────────────────────────────────────
 window.pet.onLayout?.(applyWindowLayout)

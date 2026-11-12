@@ -66,6 +66,8 @@ let hoverSince = 0
 let menuOpen = false
 let lastInput = ''
 let inputTimer = null
+let rendererHover = false // 화면이 알려 준: 마우스가 캐릭터 위에 있는가
+let pointerHeld = false // 화면이 알려 준: 캐릭터를 누르고 있는가
 let stateWatcher = null
 let stateRefreshTimer = null
 let cachedState = null
@@ -154,7 +156,10 @@ function applyBounds() {
   const pet = petSize(cfg)
   const area = screen.getDisplayMatching({ ...petPos, ...pet }).workArea
   const art = { ...pet, artWidth: pet.width * 0.94, artTop: cfg.size * 0.06, artHeight: cfg.size * 0.94 / (cfg.view === 'bust' ? BUST : 1) }
-  const next = windowLayout({ position: petPos, pet: art, bubble: BUBBLE, area, expanded: false, dragging: !!dragFrom, anchors: lastLayout?.stage })
+  // 창은 언제나 '집어 들었을 때' 크기(회전 여유 포함)로 둔다. 예전엔 집을 때 키우고 놓을 때 줄였는데,
+  // macOS가 크기가 바뀌는 순간 직전 화면을 한 프레임 늘이거나 밀어서 보여 줘서, 놓은 뒤 캐릭터가
+  // 깜빡이며 다른 곳에 순간 이동했다 돌아오는 것처럼 보였다. 빈 자리는 마우스가 통과한다(syncInput).
+  const next = windowLayout({ position: petPos, pet: art, bubble: BUBBLE, area, expanded: false, dragging: true, anchors: lastLayout?.stage })
   petPos = next.position
   if (JSON.stringify(next) !== JSON.stringify(lastLayout)) {
     lastLayout = next
@@ -365,12 +370,21 @@ function startTracker() {
 }
 
 // ── 고정 모드: 마우스를 받을지 말지 ─────────────────────────────────────
+/** 마우스를 받아야 하는 화면 영역: 창 전체가 아니라 그 안의 캐릭터 자리. */
+function petRect() {
+  const b = win.getBounds()
+  const st = lastLayout?.stage
+  return st ? { x: b.x + st.left, y: b.y + st.top, width: st.width, height: st.height } : b
+}
+
 function cursorOverPet() {
+  // 화면(렌더러)이 캐릭터 위에 마우스가 있다고 알려 왔으면 그걸 믿는다. 가장 빠르고 정확하다.
+  if (rendererHover) return true
   // Wayland에서는 앱이 화면 전체의 마우스 위치를 알 수 없어서, 창 관리자가 알려 준 값을 쓴다.
   if (tracker?.kind === 'kwin' && !trackError) return !!track.hover
   const p = screen.getCursorScreenPoint()
-  const b = win.getBounds()
-  return p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height
+  const r = petRect()
+  return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height
 }
 
 function syncInput() {
@@ -379,8 +393,14 @@ function syncInput() {
   if (!win) return
   const cfg = store.get()
   if (cfg.locked && win.isVisible() && !expanded && !menuOpen && tracker?.kind !== 'kwin') inputTimer = setTimeout(syncInput, 100)
-  if (!cfg.locked || TESTING) {
-    armed = true
+  // 마우스 이동을 화면으로 전달할 수 없는 Linux에서는 캐릭터에 닿았는지 직접 살핀다.
+  else if (!cfg.locked && process.platform === 'linux' && win.isVisible() && tracker?.kind !== 'kwin') inputTimer = setTimeout(syncInput, 100)
+  if (TESTING || pointerHeld || dragFrom) {
+    armed = true // 누르고 있는 동안 놓치면 손을 뗀 걸 모른다
+    hoverSince = 0
+  } else if (!cfg.locked) {
+    // 창은 캐릭터보다 크다. 빈 자리는 통과시켜 뒤의 앱 창을 그대로 누를 수 있게 한다.
+    armed = menuOpen || (win.isVisible() && cursorOverPet())
     hoverSince = 0
   } else if (expanded || menuOpen) {
     armed = true // 대화 중이거나 메뉴가 떠 있는 동안에는 계속 받는다
@@ -401,8 +421,9 @@ function syncInput() {
   const text = `${cfg.locked}/${armed}`
   if (text === lastInput) return
   lastInput = text
-  win.setIgnoreMouseEvents(!armed)
-  win.webContents.send('pet:input', { locked: cfg.locked, armed })
+  // forward: 통과시키는 동안에도 마우스 움직임은 화면에 알려서, 캐릭터에 닿는 즉시 다시 받는다.
+  win.setIgnoreMouseEvents(!armed, { forward: true })
+  win.webContents.send('pet:input', { locked: cfg.locked, armed: cfg.locked ? armed : true })
 }
 
 // ── 창 ─────────────────────────────────────────────────────────────────
@@ -824,6 +845,12 @@ function wireIpc() {
     chatVisibility: { open: expanded, layout: chatLayout() },
     ccState: store.get().followClaudeCode ? readState() : null,
   }))
+  ipcMain.on('pet:hover', (e, over, held) => {
+    if (e.sender !== win?.webContents) return
+    rendererHover = !!over
+    pointerHeld = !!held
+    syncInput()
+  })
   ipcMain.on('pet:expand', (_e, on) => {
     setChatOpen(on)
   })
