@@ -262,3 +262,20 @@ test('state changes drive the motion engine, hiding pauses it, and chat joy play
   r.callbacks.Visibility(true)
   assert.equal(r.animator.paused.at(-1), false)
 })
+
+test('dropping a tilted pet straightens it first, then ends the drag exactly once', async () => {
+  const r = await renderer()
+  r.evaluate('window.pet.drag = (phase) => globalThis.__drags.push(phase)')
+  r.evaluate('globalThis.__drags = []')
+  // 들고 있다가 200도 돌아간 상태에서 놓는다
+  r.evaluate("dragging = true; heldAngle = 200; let made = null; bodyEl.animate = (frames, options) => (made = { frames, options, cancel() {} }); globalThis.__anim = () => made")
+  r.evaluate("settleThenEndDrag(true)")
+  assert.equal(r.evaluate('JSON.stringify(globalThis.__drags)'), '[]', 'the window keeps its drag size while the pet straightens')
+  const anim = r.evaluate('globalThis.__anim()')
+  assert.equal(anim.frames[0].transform, 'rotate(-160.00deg)', 'turns back the short way')
+  r.evaluate('globalThis.__anim().onfinish()')
+  assert.equal(r.evaluate('JSON.stringify(globalThis.__drags)'), '["end"]')
+  // 되돌리는 중에 다시 잡으면 앞의 끌기를 먼저 끝낸다(중복 없이)
+  r.evaluate("heldAngle = 90; settleThenEndDrag(false); finishSettle(); finishSettle()")
+  assert.equal(r.evaluate('JSON.stringify(globalThis.__drags)'), '["end","end"]')
+})

@@ -635,6 +635,50 @@ let pendulum = null
 let heldFrame = null
 let heldTick = null
 
+// ── 내려놓기 ───────────────────────────────────────────────────────────
+// 예전엔 손을 떼는 순간 기울어진 몸이 한 프레임에 똑바로 서고, 같은 순간 커져 있던 창이 줄어들었다.
+// 그 한 프레임이 다른 자리에 잔상처럼 보였다. 이제는 기울기를 짧게 되돌려 똑바로 선 뒤에
+// 끌기를 끝내서(창 줄이기) 회전한 그림이 줄어드는 창에 걸리지 않게 한다.
+const SETTLE_MS = 320 // 기울어진 몸이 똑바로 돌아오는 시간
+let heldAngle = 0
+let settle = null // { anim, done } 되돌리는 중
+
+/** -180~180도로: 여러 바퀴 돌았어도 가장 가까운 방향으로 돌아온다. */
+const shortestAngle = deg => ((((deg % 360) + 540) % 360) - 180)
+
+function finishSettle() {
+  if (!settle) return
+  const { anim, done } = settle
+  settle = null
+  anim?.cancel()
+  done()
+}
+
+function endDrag(pointerUp) {
+  window.pet.drag('end')
+  if (pointerUp) boing(0.05) // 내려놓으면 한 번 출렁
+}
+
+function settleThenEndDrag(pointerUp) {
+  const angle = shortestAngle(heldAngle)
+  const origin = bodyEl.style.transformOrigin
+  heldAngle = 0
+  stopHeldMotion()
+  if (cfg.reduceMotion || !visible || Math.abs(angle) < 0.5 || !bodyEl.animate) return endDrag(pointerUp)
+  bodyEl.style.transformOrigin = origin
+  const anim = bodyEl.animate(
+    [{ transform: `rotate(${angle.toFixed(2)}deg)` }, { transform: `rotate(${(-angle * 0.1).toFixed(2)}deg)`, offset: 0.7 }, { transform: 'rotate(0deg)' }],
+    { duration: SETTLE_MS, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', id: 'settle' },
+  )
+  const done = () => {
+    bodyEl.style.removeProperty('transform-origin')
+    endDrag(pointerUp)
+  }
+  settle = { anim, done }
+  const finish = () => { if (settle?.anim === anim) { settle = null; done() } }
+  anim.onfinish = finish
+}
+
 function stopHeldMotion() {
   if (heldFrame !== null) cancelAnimationFrame(heldFrame)
   heldFrame = null
@@ -664,6 +708,7 @@ function beginHeldMotion(e) {
     if (!dragging || !pendulum || !visible) return
     // Mirroring must not reverse the visual response to the user's hand.
     const angle = pendulum.step(at) * (cfg.flip ? -1 : 1)
+    heldAngle = angle
     bodyEl.style.transform = `rotate(${angle.toFixed(3)}deg)`
     if (!pendulum.isSettled()) wakeHeldMotion()
   }
@@ -676,6 +721,7 @@ function wakeHeldMotion() {
 
 stage.addEventListener('pointerdown', e => {
   if (!cfg || e.button !== 0 || down) return
+  finishSettle() // 되돌리는 중에 다시 잡으면 앞의 끌기를 먼저 끝맺는다
   sound.unlock()
   const head = onHead(e) && (!locked || cfg.lockedPetting)
   down = { x: e.screenX, y: e.screenY, clientX: e.clientX, clientY: e.clientY, at: e.timeStamp, head, pointerId: e.pointerId }
@@ -722,12 +768,10 @@ const release = e => {
   const pointerId = down.pointerId
   down = null
   stage.classList.remove('dragging')
-  stopHeldMotion()
+  if (!dragging) stopHeldMotion() // 끌던 중이면 settleThenEndDrag가 기울기를 이어받아 되돌린다
   if (head) stopPetting()
-  else if (dragging) {
-    window.pet.drag('end')
-    if (e.type === 'pointerup') boing(0.05) // 내려놓으면 한 번 출렁
-  } else if (e.type === 'pointerup' && cfg.chatEnabled !== false && (!locked || cfg.lockedChat)) {
+  else if (dragging) settleThenEndDrag(e.type === 'pointerup')
+  else if (e.type === 'pointerup' && cfg.chatEnabled !== false && (!locked || cfg.lockedChat)) {
     wake()
     // 바깥을 눌러 막 닫힌 순간의 같은 클릭이면 다시 열지 않는다(닫기 → 열기 깜빡임 방지).
     if (!bubbleOpen && performance.now() - chatClosedAt > REOPEN_GUARD_MS) openBubble()
