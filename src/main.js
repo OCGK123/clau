@@ -424,6 +424,9 @@ function createPet() {
     hasShadow: false,
     // macOS: 다른 앱이 앞에 있어도 첫 클릭부터 받는다(없으면 머리 연타의 첫 탭이 창 활성화에 먹힌다).
     acceptFirstMouse: true,
+    // 집어 들면 회전 여유만큼 창이 화면보다 커질 수 있다. macOS는 기본적으로 창을 화면 안으로
+    // 줄이거나 밀어 넣는데, 그러면 창 원점이 바뀌어 캐릭터가 순간 이동한 것처럼 보였다.
+    enableLargerThanScreen: true,
     skipTaskbar: !cfg.showInDock,
     // Windows에서는 도구 창으로 만들어 작업 표시줄과 Alt+Tab 목록에서 뺀다.
     ...(process.platform === 'win32' && !cfg.showInDock ? { type: 'toolbar' } : {}),
