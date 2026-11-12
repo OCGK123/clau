@@ -59,6 +59,7 @@ const DEFAULTS = {
   petting: true, // 머리를 누르면 쓰다듬기
   dragEnabled: true,
   dragPhysics: true,
+  swingStyle: 'natural', // 'natural' 적당히 흔들림 | 'spin' 세게 흔들면 빙글빙글 여러 바퀴
   soundEnabled: true, // 처음부터 켜짐(병합 때 합의)
   soundVolume: 35,
   pettingSound: 'squee', // 머리를 누르면 꺅
@@ -115,6 +116,7 @@ function normalize(raw) {
   next.dozeMinutes = clampInt(next.dozeMinutes, 0, 120, DEFAULTS.dozeMinutes)
   next.soundVolume = clampInt(next.soundVolume, 0, 100, DEFAULTS.soundVolume)
   next.pettingSound = pick(next.pettingSound, ['none', 'chime', 'pop', 'squee', 'custom'], DEFAULTS.pettingSound)
+  next.swingStyle = pick(next.swingStyle, ['natural', 'spin'], DEFAULTS.swingStyle)
   next.talkingSound = pick(next.talkingSound, ['none', 'soft', 'type', 'custom'], DEFAULTS.talkingSound)
   for (const kind of ['petting', 'talking']) {
     const meta = next[`${kind}SoundFile`]

@@ -640,6 +640,8 @@ let heldTick = null
 // 그 한 프레임이 다른 자리에 잔상처럼 보였다. 이제는 기울기를 짧게 되돌려 똑바로 선 뒤에
 // 끌기를 끝내서(창 줄이기) 회전한 그림이 줄어드는 창에 걸리지 않게 한다.
 const SETTLE_MS = 320 // 기울어진 몸이 똑바로 돌아오는 시간
+const SWING_LIMIT_RAD = 0.6 // 자연스럽게: 약 34도
+const SWING_SMOOTHING = 0.55 // 자연스럽게: 손 속도를 이만큼 부드럽게 따라간다
 let heldAngle = 0
 let settle = null // { anim, done } 되돌리는 중
 
@@ -700,7 +702,10 @@ function beginHeldMotion(e) {
   const x = cfg.flip ? box.width - visualX : visualX
   const y = down.clientY - box.top
   bodyEl.style.transformOrigin = `${x}px ${y}px`
-  pendulum = window.PetMotion.create({ length: cfg.size * 0.5 })
+  // 자연스럽게(기본): 약 35도까지 기울고 부드러운 벽에서 돌아온다. 집어 드는 순간의 툭 튐도 걸러 낸다.
+  // 빙글빙글: 원래 0.5.0 동작(제한 없음, 여러 바퀴).
+  const natural = cfg.swingStyle !== 'spin'
+  pendulum = window.PetMotion.create({ length: cfg.size * 0.5, ...(natural ? { limit: SWING_LIMIT_RAD, smoothing: SWING_SMOOTHING } : {}) })
   pendulum.begin(down.x, down.at)
   pendulum.move(e.screenX, e.timeStamp)
   heldTick = at => {

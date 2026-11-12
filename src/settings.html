@@ -189,6 +189,10 @@
           <input type="checkbox" class="switch" id="dragPhysics" data-key="dragPhysics" />
         </div>
         <div class="row">
+          <div class="text"><label for="swingStyle">흔들리는 정도</label><p>자연스럽게는 적당히 기울었다 돌아오고, 빙글빙글은 세게 흔들면 여러 바퀴 돌아요.</p></div>
+          <select id="swingStyle" data-key="swingStyle"><option value="natural">자연스럽게</option><option value="spin">빙글빙글</option></select>
+        </div>
+        <div class="row">
           <div class="text"><label for="dozeMinutes">조용하면 졸기</label><p>0이면 졸지 않아요.</p></div>
           <span class="unit"><input type="number" id="dozeMinutes" data-key="dozeMinutes" min="0" max="120" /> 분 뒤</span>
         </div>

@@ -95,3 +95,34 @@ test('release clears the spring and invalid or duplicate timestamps cannot injec
   motion.begin(9, 50)
   assert.equal(motion.step(66), 0)
 })
+
+test('natural swing stays near its soft limit and returns without bouncing, even when shaken hard', () => {
+  const limitDeg = 0.6 * 180 / Math.PI
+  const motion = create({ length: 150, limit: 0.6, smoothing: 0.55 })
+  motion.begin(0, 0)
+  let x = 0
+  let peak = 0
+  let at = 0
+  for (; at < 1500; at += 16) {
+    x += (Math.floor(at / 120) % 2 ? -1 : 1) * 60 // 좌우로 세게 흔들기
+    motion.move(x, at)
+    peak = Math.max(peak, Math.abs(motion.step(at)))
+  }
+  assert.ok(peak < limitDeg * 1.35, `peak ${peak.toFixed(1)}deg stays near ${limitDeg.toFixed(1)}deg`)
+  // 손을 멈추면 한쪽으로 튕겨 나가지 않고 잦아든다
+  let last = Infinity
+  for (let end = at + 4000; at < end; at += 16) last = Math.abs(motion.step(at))
+  assert.ok(last < 0.5, `settles (${last.toFixed(2)}deg)`)
+})
+
+test('smoothing softens the pickup jolt from a single fast pointer sample', () => {
+  const jolt = smoothing => {
+    const motion = create({ length: 150, smoothing })
+    motion.begin(0, 0)
+    motion.move(6, 4) // 끌기 시작 문턱을 넘는 첫 샘플(아주 짧은 시간에 몇 px)
+    let peak = 0
+    for (let at = 16; at < 600; at += 16) peak = Math.max(peak, Math.abs(motion.step(at)))
+    return peak
+  }
+  assert.ok(jolt(0.55) < jolt(0) * 0.6, 'smoothed pickup is clearly gentler')
+})

@@ -5,7 +5,11 @@
 
   const TURN = Math.PI * 2
 
-  function create({ length = 110 } = {}) {
+  /**
+   * limit: 이 각도(라디안)를 넘으면 부드러운 벽에 기댄 듯 되돌아온다. 기본은 제한 없음(여러 바퀴 회전).
+   * smoothing: 0~1. 손 속도를 이만큼 부드럽게 따라가 집어 드는 순간·튀는 포인터 샘플의 툭 튐을 줄인다.
+   */
+  function create({ length = 110, limit = Infinity, smoothing = 0 } = {}) {
     let angle = 0
     let velocity = 0
     let handVelocity = 0
@@ -15,6 +19,8 @@
     let active = false
     let settled = true
     const arm = Number.isFinite(length) ? Math.max(35, length) : 110
+    const wall = Number.isFinite(limit) && limit > 0 ? limit : Infinity
+    const follow = 1 - clamp(Number(smoothing) || 0, 0, 0.95)
     const kick = delta => {
       velocity += delta / arm * 0.42
       if (delta !== 0) settled = false
@@ -33,7 +39,9 @@
         const seconds = Math.max(0.008, (at - lastAt) / 1000)
         // This bounds malformed pointer samples, not the angle or number of
         // turns. Ordinary mouse velocities keep their proportional response.
-        const next = clamp((x - lastX) / seconds, -100000, 100000)
+        const raw = clamp((x - lastX) / seconds, -100000, 100000)
+        // 부드럽게 따라가기: 한 샘플의 급격한 속도 변화가 그대로 회전 충격이 되지 않게.
+        const next = handVelocity + (raw - handVelocity) * follow
         kick(next - handVelocity)
         handVelocity = next
         lastX = x
@@ -53,6 +61,9 @@
           const dt = Math.min(remaining, 1 / 240)
           const gravity = 2600 / arm
           velocity += (-gravity * Math.sin(angle) - 4.2 * velocity) * dt
+          // 부드러운 벽: 넘어선 만큼 강한 복원력과 감쇠가 붙는다. 딱 부딪혀 튕기지 않는다.
+          const over = Math.abs(angle) - wall
+          if (over > 0) velocity += (-Math.sign(angle) * over * 420 - 14 * velocity) * dt
           angle += velocity * dt
           remaining -= dt
         }
