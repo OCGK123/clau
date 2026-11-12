@@ -1,0 +1,271 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  font-family: 'Pretendard', 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+}
+
+body {
+  position: relative;
+  width: 100%;
+}
+
+/* Chat is rendered only by the independent bubble window. */
+#bubble { display: none !important; }
+
+/* ── 캐릭터 ─────────────────────────────────────────── */
+#stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  cursor: grab;
+  touch-action: none;
+}
+#stage.drag-disabled {
+  cursor: default;
+}
+#stage.drag-disabled.chat-enabled {
+  cursor: pointer;
+}
+#stage:focus-visible {
+  outline: 2px dashed #b15b40;
+  outline-offset: -3px;
+  border-radius: 14px;
+}
+#stage.dragging {
+  cursor: grabbing;
+}
+#stage.over-head {
+  cursor: pointer;
+}
+#stage.locked {
+  cursor: default;
+}
+#stage.locked.can-chat {
+  cursor: pointer;
+}
+#pet {
+  position: absolute;
+  --u: 2px; /* 캐릭터 높이의 1% */
+}
+#pet.flip {
+  transform: scaleX(-1);
+}
+#pet img,
+#pet svg.eyes {
+  position: absolute;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+/* 뜬 눈은 아래쪽을 붙잡고 눌린다: 눈꺼풀이 내려와 감은 눈 자리에서 만난다 */
+#pet [data-role='eyes_open'] {
+  transform-origin: 50% 86%;
+}
+#pet [data-role='mouth_open'] {
+  transform-origin: 50% 20%;
+}
+.body {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 100%;
+}
+
+/* 작은 친구: 바깥 상자는 늘 둥실둥실, 안쪽 그림은 상태에 따라 통통 뛴다 */
+.buddy-float {
+  position: absolute;
+  animation: float-y 3.4s ease-in-out infinite alternate, float-tilt 5.3s ease-in-out infinite alternate;
+}
+.buddy-float img {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 100%;
+}
+#pet.no-buddy .buddy-float {
+  display: none;
+}
+
+/* 눈과 입: 지금 상태에 맞는 한 장만 보인다 */
+#pet .eyes,
+#pet .mouth {
+  visibility: hidden;
+}
+#pet[data-eyes='open'] [data-role='eyes_open'],
+#pet[data-eyes='closed'] [data-role='eyes_closed'],
+#pet[data-eyes='happy'] [data-role='eyes_happy'],
+#pet[data-eyes='x'] [data-role='eyes_x'],
+#pet[data-mouth='closed'] [data-role='mouth_closed'],
+#pet[data-mouth='open'] [data-role='mouth_open'],
+#pet[data-mouth='sleep'] [data-role='mouth_sleep'] {
+  visibility: visible;
+}
+
+/* 쓰다듬으면 떠오르는 하트 */
+.heart {
+  position: absolute;
+  width: calc(var(--u, 2.2px) * 7);
+  margin: calc(var(--u, 2.2px) * -3.5);
+  pointer-events: none;
+  animation: heart-up 0.85s ease-out forwards;
+}
+.heart svg {
+  display: block;
+  width: 100%;
+  fill: #f2705c;
+  stroke: #4a2b25;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+/* 상태별 몸짓 */
+#pet.mode-idle .body {
+  animation: breathe 4.4s ease-in-out infinite;
+}
+#pet.mode-talking .body {
+  animation: bob 0.34s ease-in-out infinite alternate;
+}
+#pet.mode-working .buddy-float img {
+  animation: hop 0.5s ease-in-out infinite;
+}
+#pet.mode-happy .body {
+  animation: jump 0.45s ease-out 2;
+}
+#pet.mode-happy .buddy-float img {
+  animation: hop 0.4s ease-out 4;
+}
+#pet.mode-oops .body {
+  animation: shake 0.09s linear 8;
+}
+#pet.mode-oops .buddy-float img {
+  animation: tilt 0.3s ease-in-out 3;
+}
+/* 쓰다듬는 중: 위아래로 말랑말랑 */
+#pet.mode-petted .body {
+  animation: squish 0.52s ease-in-out infinite;
+}
+#pet.mode-petted .buddy-float img {
+  animation: hop 0.52s ease-in-out infinite;
+}
+/* 손을 뗀 직후: 한 번 출렁이고 가라앉는다 */
+#pet.mode-pleased .body {
+  animation: settle 0.6s ease-out 1;
+}
+#pet.mode-dozing .body {
+  animation: breathe 5s ease-in-out infinite;
+}
+#pet.mode-sleeping .body {
+  animation: breathe 4s ease-in-out infinite;
+}
+/* Held motion is input-driven in pet-motion.js, never a looping animation. */
+#stage.dragging .body {
+  animation: none !important;
+  will-change: transform;
+}
+#stage.dragging .buddy-float {
+  animation-play-state: paused;
+}
+
+.z {
+  display: none;
+  position: absolute;
+  font-weight: 800;
+  font-size: calc(var(--u) * 9);
+  color: #5a2d2a;
+  text-shadow: -2px 0 #fff, 2px 0 #fff, 0 -2px #fff, 0 2px #fff;
+  opacity: 0;
+}
+#pet.mode-sleeping .z {
+  display: block;
+  animation: zz 3.6s ease-out infinite;
+}
+#pet.mode-sleeping .z2 {
+  animation-delay: 1.2s;
+}
+#pet.mode-sleeping .z3 {
+  animation-delay: 2.4s;
+}
+
+@keyframes dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.55; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+@keyframes heart-up {
+  0% { opacity: 0; transform: translate(0, 4px) scale(0.3) rotate(var(--lean, 0deg)); }
+  22% { opacity: 1; transform: translate(0, -4px) scale(1.15) rotate(var(--lean, 0deg)); }
+  38% { transform: translate(0, -8px) scale(0.95) rotate(var(--lean, 0deg)); }
+  100% { opacity: 0; transform: translate(var(--drift, 0), calc(var(--u, 2.2px) * -19)) scale(0.8) rotate(var(--lean, 0deg)); }
+}
+@keyframes float-y {
+  from { translate: 0 calc(var(--u) * 1.3); }
+  to { translate: 0 calc(var(--u) * -1.7); }
+}
+@keyframes float-tilt {
+  from { rotate: -2.2deg; }
+  to { rotate: 2.2deg; }
+}
+@keyframes squish {
+  0%, 100% { transform: scale(1, 1); }
+  28% { transform: scale(1.05, 0.925); }
+  58% { transform: scale(0.972, 1.032); }
+  80% { transform: scale(1.014, 0.984); }
+}
+@keyframes settle {
+  0% { transform: scale(1.04, 0.95); }
+  35% { transform: scale(0.975, 1.03); }
+  65% { transform: scale(1.012, 0.988); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes bob {
+  from { transform: translateY(0); }
+  to { transform: translateY(calc(var(--u) * -0.9)); }
+}
+@keyframes hop {
+  0%, 100% { transform: translateY(0); }
+  45% { transform: translateY(calc(var(--u) * -4)); }
+}
+@keyframes jump {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(calc(var(--u) * -3.5)); }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(calc(var(--u) * -1.2)); }
+  75% { transform: translateX(calc(var(--u) * 1.2)); }
+}
+@keyframes tilt {
+  0%, 100% { transform: rotate(0); }
+  50% { transform: rotate(-12deg); }
+}
+@keyframes breathe {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.012, 0.988); }
+}
+@keyframes zz {
+  0% { opacity: 0; transform: translate(0, 0); }
+  15% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(var(--u) * 8), calc(var(--u) * -16)); }
+}
+
+/* 움직임 줄이기: 표정만 바뀌고 몸은 가만히 */
+.calm ~ .heart {
+  display: none;
+}
+#stage.dragging .calm .body,
+#pet.calm .body,
+#pet.calm .buddy-float,
+#pet.calm .buddy-float img {
+  animation: none !important;
+}
+.reduce-motion .dots i {
+  animation: none;
+}
+.is-hidden *,
+.is-hidden *::before,
+.is-hidden *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
+}

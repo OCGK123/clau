@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' file:" />
+    <title>클로 설정</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <nav aria-label="설정 항목">
+      <button class="tab" data-tab="chat">대화</button>
+      <button class="tab" data-tab="look">모습</button>
+      <button class="tab" data-tab="place">자리</button>
+      <button class="tab" data-tab="lock">고정</button>
+      <button class="tab" data-tab="react">반응</button>
+      <button class="tab" data-tab="run">실행</button>
+    </nav>
+
+    <main>
+      <p id="saveStatus" class="status" role="status" aria-live="polite">바꾸면 바로 저장돼요.</p>
+      <section data-page="chat">
+        <h1>함께 대화하기</h1>
+        <div class="row">
+          <div class="text"><label for="chatEnabled">눌러서 대화</label><p>얼굴이나 몸을 누르면 말풍선이 열려요.</p></div>
+          <input type="checkbox" class="switch" id="chatEnabled" data-key="chatEnabled" />
+        </div>
+        <div class="row">
+          <label for="chatProvider">대답해 줄 서비스</label>
+          <select id="chatProvider" data-key="chatProvider"><option value="claude">Claude Code</option><option value="codex">Codex</option></select>
+        </div>
+        <p id="providerStatus" class="note" role="status"></p>
+        <div id="claudeModelFields" data-when="chatProvider=claude">
+        <div class="row">
+          <label for="model">모델</label>
+          <select id="model"></select>
+        </div>
+        <div class="row" id="customRow" hidden>
+          <label for="customModel">모델 ID</label>
+          <input type="text" id="customModel" placeholder="claude-haiku-5-5" spellcheck="false" />
+        </div>
+        </div>
+        <div class="row stack" data-when="chatProvider=codex">
+          <label for="codexModel">Codex 모델</label>
+          <input type="text" id="codexModel" data-key="codexModel" placeholder="비워 두면 Codex 기본 모델" spellcheck="false" />
+          <p class="note">로그인한 Codex CLI로 대화해요. 모델 ID를 직접 지정할 수도 있어요.</p>
+        </div>
+        <div class="row stack">
+          <div class="head">
+            <label for="persona">말투와 성격</label>
+            <button type="button" id="resetPersona" class="quiet">기본으로</button>
+          </div>
+          <textarea id="persona" data-key="persona" spellcheck="false"></textarea>
+        </div>
+        <div class="row">
+          <label for="noEmoji">이모지 없이 말하기</label>
+          <input type="checkbox" class="switch" id="noEmoji" data-key="noEmoji" />
+        </div>
+        <div class="row">
+          <div class="text"><label for="historyTurns">기억하는 대화</label><p>0이면 매번 처음 만난 것처럼 답해요.</p></div>
+          <span class="unit"><input type="number" id="historyTurns" data-key="historyTurns" min="0" max="30" /> 번</span>
+        </div>
+        <div class="row">
+          <div class="text"><label for="bubbleSeconds">말풍선 닫기</label><p>0이면 직접 닫을 때까지 열어 둬요.</p></div>
+          <span class="unit"><input type="number" id="bubbleSeconds" data-key="bubbleSeconds" min="0" max="600" /> 초 뒤</span>
+        </div>
+        <div class="row">
+          <label>지금까지 나눈 대화</label>
+          <button type="button" id="clearChat">지우기</button>
+        </div>
+      </section>
+
+      <section data-page="look">
+        <h1>클로의 모습</h1>
+        <div class="row">
+          <label for="size">크기</label>
+          <span class="slider"><input type="range" id="size" data-key="size" min="100" max="600" step="10" /><output id="sizeOut"></output></span>
+        </div>
+        <div class="row">
+          <label>보이는 범위</label>
+          <div class="seg" data-key="view">
+            <button type="button" data-value="full">전신</button>
+            <button type="button" data-value="bust">상반신</button>
+          </div>
+        </div>
+        <div class="row">
+          <label for="showBuddy">작은 친구</label>
+          <input type="checkbox" class="switch" id="showBuddy" data-key="showBuddy" />
+        </div>
+        <div class="row">
+          <label for="opacity">불투명도</label>
+          <span class="slider"><input type="range" id="opacity" data-key="opacity" min="20" max="100" step="5" /><output id="opacityOut"></output></span>
+        </div>
+        <div class="row">
+          <label for="flip">좌우 뒤집기</label>
+          <input type="checkbox" class="switch" id="flip" data-key="flip" />
+        </div>
+        <div class="row">
+          <div class="text"><label for="reduceMotion">움직임 줄이기</label><p>표정만 바뀌고 몸은 가만히 있어요.</p></div>
+          <input type="checkbox" class="switch" id="reduceMotion" data-key="reduceMotion" />
+        </div>
+      </section>
+
+      <section data-page="place">
+        <h1>함께 있을 앱</h1>
+        <div class="row">
+          <div class="text"><label>사는 곳</label><p id="trackStatus"></p></div>
+          <div class="seg" data-key="placement">
+            <button type="button" data-value="claude">선택한 앱 창 안</button>
+            <button type="button" data-value="free">화면 위</button>
+          </div>
+        </div>
+        <div class="row" data-when="placement=claude">
+          <label for="showWhen">보이는 때</label>
+          <select id="showWhen" data-key="showWhen">
+            <option value="focused">선택한 앱을 쓰는 동안만</option>
+            <option value="open">선택한 앱이 열려 있으면 계속</option>
+          </select>
+        </div>
+        <div class="row stack" data-when="placement=claude">
+          <div class="head"><label for="targetAppSelect">따라붙을 앱</label><button type="button" id="refreshApps">새로고침</button></div>
+          <select id="targetAppSelect" aria-describedby="appsStatus"><option value="">앱 목록을 불러오는 중…</option></select>
+          <p class="status" id="appsStatus" role="status">지금 창이 열려 있는 앱 중에서 골라 주세요. 다음에 켜도 기억해요.</p>
+        </div>
+        <div class="row" data-when="placement=free">
+          <label for="alwaysOnTop">항상 다른 창 위에</label>
+          <input type="checkbox" class="switch" id="alwaysOnTop" data-key="alwaysOnTop" />
+        </div>
+        <div class="row">
+          <div class="text"><label>자리</label><p>끌어서 옮긴 자리를 기억해요.</p></div>
+          <button type="button" id="resetPlace">처음 자리로</button>
+        </div>
+      </section>
+
+      <section data-page="lock">
+        <h1>자리를 고정하기</h1>
+        <div class="row">
+          <div class="text"><label for="locked">고정 모드</label><p>자리가 고정되고, 클릭은 클로를 그대로 통과해요.</p></div>
+          <input type="checkbox" class="switch" id="locked" data-key="locked" />
+        </div>
+        <div class="row">
+          <label for="lockedChat">고정 중에도 눌러서 대화</label>
+          <input type="checkbox" class="switch" id="lockedChat" data-key="lockedChat" />
+        </div>
+        <div class="row">
+          <label for="lockedPetting">고정 중에도 쓰다듬기</label>
+          <input type="checkbox" class="switch" id="lockedPetting" data-key="lockedPetting" />
+        </div>
+        <div class="how">
+          <strong>고정 모드 끄는 법</strong>
+          <ul>
+            <li>선택한 앱을 쓰는 중에 클로 위에 마우스를 잠깐 올렸다가 오른쪽 클릭</li>
+            <li id="trayHow"></li>
+            <li>클로를 한 번 더 실행하면 이 창이 열려요</li>
+          </ul>
+        </div>
+      </section>
+
+      <section data-page="react">
+        <h1>손길과 소리</h1>
+        <div class="row">
+          <div class="text"><label for="followClaudeCode">Claude Code 따라 하기</label><p id="modStatus"></p></div>
+          <input type="checkbox" class="switch" id="followClaudeCode" data-key="followClaudeCode" />
+        </div>
+        <div class="row">
+          <div class="text"><label for="petting">쓰다듬기</label><p>모자나 정수리를 누르거나 문질러요.</p></div>
+          <input type="checkbox" class="switch" id="petting" data-key="petting" />
+        </div>
+        <div class="row">
+          <div class="text"><label for="dragEnabled">집어서 자리 옮기기</label><p>몸을 잡아 끌면 X자 눈으로 달랑거려요.</p></div>
+          <input type="checkbox" class="switch" id="dragEnabled" data-key="dragEnabled" />
+        </div>
+        <div class="row">
+          <div class="text"><label for="dragPhysics">움직임에 따라 흔들리기</label><p>세게 옮길수록 더 흔들리고, 손을 멈추면 잦아들어요.</p></div>
+          <input type="checkbox" class="switch" id="dragPhysics" data-key="dragPhysics" />
+        </div>
+        <div class="row">
+          <div class="text"><label for="dozeMinutes">조용하면 졸기</label><p>0이면 졸지 않아요.</p></div>
+          <span class="unit"><input type="number" id="dozeMinutes" data-key="dozeMinutes" min="0" max="120" /> 분 뒤</span>
+        </div>
+        <h2>효과음</h2>
+        <div class="row">
+          <label for="soundEnabled">효과음 켜기</label>
+          <input type="checkbox" class="switch" id="soundEnabled" data-key="soundEnabled" />
+        </div>
+        <div class="row">
+          <label for="soundVolume">소리 크기</label>
+          <span class="slider"><input type="range" id="soundVolume" data-key="soundVolume" min="0" max="100" step="5" /><output id="soundVolumeOut"></output></span>
+        </div>
+        <div class="row">
+          <label for="pettingSound">쓰다듬을 때</label>
+          <div class="control-pair"><select id="pettingSound" data-key="pettingSound"><option value="chime">맑은 종소리</option><option value="pop">톡톡</option><option value="none">소리 없음</option></select><button type="button" id="previewPetting" aria-label="쓰다듬기 소리 미리 듣기">듣기</button></div>
+        </div>
+        <div class="row">
+          <label for="talkingSound">말할 때</label>
+          <div class="control-pair"><select id="talkingSound" data-key="talkingSound"><option value="soft">작은 말소리</option><option value="type">타닥타닥</option><option value="none">소리 없음</option></select><button type="button" id="previewTalking" aria-label="말하기 소리 미리 듣기">듣기</button></div>
+        </div>
+      </section>
+
+      <section data-page="run">
+        <h1>실행과 연결</h1>
+        <h2>언제 켤까</h2>
+        <div class="row">
+          <label for="autostart">컴퓨터를 켤 때</label>
+          <input type="checkbox" class="switch" id="autostart" data-key="autostart" />
+        </div>
+        <div class="row">
+          <div class="text"><label for="wakeWithClaude">Claude Code를 열 때</label><p id="wakeHelp"></p></div>
+          <input type="checkbox" class="switch" id="wakeWithClaude" data-key="wakeWithClaude" />
+        </div>
+
+        <h2>아이콘</h2>
+        <div class="row">
+          <label for="tray" id="trayLabel"></label>
+          <input type="checkbox" class="switch" id="tray" data-key="tray" />
+        </div>
+        <div class="row">
+          <label for="showInDock" id="dockLabel"></label>
+          <input type="checkbox" class="switch" id="showInDock" data-key="showInDock" />
+        </div>
+
+        <h2>Claude Code</h2>
+        <div class="row">
+          <div class="text"><label>연결</label><p id="linkStatus"></p></div>
+          <button type="button" id="linkMod"></button>
+        </div>
+        <div class="row stack">
+          <label for="claudePath">claude 실행 파일</label>
+          <input type="text" id="claudePath" data-key="claudePath" placeholder="비워 두면 알아서 찾아요" spellcheck="false" />
+          <p class="status" id="claudeStatus"></p>
+        </div>
+        <h2>Codex</h2>
+        <div class="row stack">
+          <label for="codexPath">codex 실행 파일</label>
+          <input type="text" id="codexPath" data-key="codexPath" placeholder="비워 두면 알아서 찾아요" spellcheck="false" />
+          <p class="status" id="codexStatus"></p>
+        </div>
+
+        <div class="row last">
+          <label>모든 설정</label>
+          <button type="button" id="resetAll" class="danger">처음으로 되돌리기</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="pet-sound.js"></script>
+    <script src="settings.js"></script>
+  </body>
+</html>

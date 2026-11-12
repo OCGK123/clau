@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' file: data:" />
+    <title>Clau</title>
+    <link rel="stylesheet" href="pet.css" />
+  </head>
+  <body>
+    <div id="bubble" hidden>
+      <div class="bubble-head"><span>클로와 대화</span><button id="closeBubble" type="button" aria-label="말풍선 닫기" title="닫기 (Esc)">×</button></div>
+      <div id="answer" role="status" aria-live="polite" aria-atomic="true"></div>
+      <form id="ask">
+        <input id="q" type="text" aria-label="클로에게 할 말" maxlength="12000" placeholder="뭐든 물어봐" autocomplete="off" spellcheck="false" />
+        <button id="cancel" type="button" aria-label="답변 중단" title="답변 중단" hidden>■</button>
+        <button id="send" type="submit" aria-label="보내기">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 13V3.5M3.8 7.4 8 3.2l4.2 4.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </button>
+      </form>
+    </div>
+    <div id="stage" tabindex="0" role="button" aria-label="클로와 대화하기. 머리를 누르면 쓰다듬고, 몸을 끌면 옮겨요.">
+      <div id="pet" class="mode-idle" data-eyes="open" data-mouth="closed">
+        <div class="buddy-float" id="buddy"></div>
+        <div class="body" id="body"></div>
+        <span class="z z1">z</span><span class="z z2">z</span><span class="z z3">z</span>
+      </div>
+    </div>
+    <script src="pet-motion.js"></script>
+    <script src="pet-sound.js"></script>
+    <script src="pet.js"></script>
+  </body>
+</html>

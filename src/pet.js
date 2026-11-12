@@ -1,0 +1,775 @@
+// 펫 화면: 레이어를 겹쳐 그리고, 상태에 따라 눈·입·몸을 움직이고, 말풍선으로 대화한다.
+const el = id => document.getElementById(id)
+const stage = el('stage')
+const petEl = el('pet')
+const bodyEl = el('body')
+const buddyEl = el('buddy')
+const bubble = el('bubble')
+const answer = el('answer')
+const form = el('ask')
+const input = el('q')
+const sendBtn = el('send')
+const cancelBtn = el('cancel')
+const closeBtn = el('closeBubble')
+const sound = window.PetSound.create()
+
+const HEADROOM = 0.06 // 폴짝 뛸 때 잘리지 않게 위쪽에 두는 여백
+const HAPPY_MS = 2500
+const OOPS_MS = 3000
+const PLEASED_MS = 1200
+const PET_LINGER_MS = 650 // 손을 뗀 뒤에도 이만큼은 쓰다듬는 표정으로
+const STALE_MS = 10 * 60_000 // Claude Code 쪽 상태가 이보다 오래되면 믿지 않는다
+const DRAG_START_PX = 4
+const PAT_COMBO_MS = 600 // 이 안에 또 누르면 연타로 친다
+const MAX_HEARTS = 8
+const HINT = '안녕, 나 클로야! 뭐든 물어봐.'
+const HEART = '<svg viewBox="0 0 20 18"><path d="M10 16.6C4.2 12.3 1.2 9.5 1.2 6a4.5 4.5 0 0 1 8.8-1.4A4.5 4.5 0 0 1 18.8 6c0 3.5-3 6.3-8.8 10.6z"/></svg>'
+
+// 그리는 순서: 작은 친구 → 몸 → 눈 → 입 → 앞머리
+const BODY_ROLES = ['base', 'eyes_open', 'eyes_closed', 'eyes_happy', 'eyes_x', 'mouth_closed', 'mouth_open', 'mouth_sleep', 'hair']
+
+let cfg
+let layers
+let bust = 0.69
+let mode = 'idle'
+let scale = 1 // 그림 좌표 → 화면 px
+let visible = true
+let mainVisible = true
+let geometry = null
+let stateTimer = null
+let pausedAnimations = []
+const imgs = {}
+
+const rand = (lo, hi) => lo + Math.random() * (hi - lo)
+
+// ── 그리기 ─────────────────────────────────────────────────────────────
+function viewRect() {
+  return cfg.showBuddy || !layers.layers.base ? layers.view : layers.layers.base
+}
+
+function build() {
+  const make = (role, parent, cls) => {
+    if (!layers.layers[role]) return
+    if (role === 'eyes_x') {
+      // The old bitmap contained one X across the whole face. Draw one clean
+      // cross per eye, aligned with the existing open-eye layer instead.
+      const eyes = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      eyes.dataset.role = role
+      eyes.setAttribute('class', cls)
+      eyes.setAttribute('viewBox', '0 0 306 110')
+      eyes.setAttribute('aria-hidden', 'true')
+      eyes.innerHTML = '<g fill="none" stroke="#3c1c0d" stroke-width="12" stroke-linecap="round"><path d="M58 43 102 87 M102 43 58 87"/><path d="M204 43 248 87 M248 43 204 87"/></g>'
+      parent.appendChild(eyes)
+      imgs[role] = eyes
+      return
+    }
+    const img = document.createElement('img')
+    img.dataset.role = role
+    img.className = cls
+    img.src = `../assets/${role}.png`
+    img.draggable = false
+    parent.appendChild(img)
+    imgs[role] = img
+  }
+  make('buddy', buddyEl, '')
+  for (const role of BODY_ROLES) make(role, bodyEl, role.startsWith('eyes') ? 'eyes' : role.startsWith('mouth') ? 'mouth' : '')
+}
+
+function layout() {
+  const [vx, vy, vw, vh] = viewRect()
+  const shownH = cfg.view === 'bust' ? vh * bust : vh
+  const petH = cfg.size
+  const petW = Math.max(40, Math.round((cfg.size * vw) / shownH))
+  scale = (petH * (1 - HEADROOM)) / shownH
+  const s = scale
+
+  stage.style.width = `${petW}px`
+  stage.style.height = `${petH}px`
+  stage.style.opacity = String(cfg.opacity / 100)
+  petEl.style.width = `${vw * s}px`
+  petEl.style.height = `${vh * s}px`
+  petEl.style.left = `${(petW - vw * s) / 2}px`
+  petEl.style.top = `${petH * HEADROOM}px`
+  petEl.style.setProperty('--u', `${petH / 100}px`)
+  stage.style.setProperty('--u', `${petH / 100}px`)
+  petEl.classList.toggle('no-buddy', !cfg.showBuddy)
+  petEl.classList.toggle('flip', cfg.flip)
+  petEl.classList.toggle('calm', cfg.reduceMotion)
+  stage.classList.toggle('chat-enabled', cfg.chatEnabled !== false)
+  stage.classList.toggle('drag-disabled', cfg.dragEnabled === false)
+  document.body.classList.toggle('reduce-motion', cfg.reduceMotion)
+  applyWindowLayout(geometry)
+
+  const put = (node, [x, y, w, h]) => {
+    node.style.left = `${(x - vx) * s}px`
+    node.style.top = `${(y - vy) * s}px`
+    node.style.width = `${w * s}px`
+    node.style.height = `${h * s}px`
+  }
+  for (const role of BODY_ROLES) {
+    if (imgs[role]) put(imgs[role], role === 'eyes_x' ? (layers.layers.eyes_open || layers.layers[role]) : layers.layers[role])
+  }
+  // 작은 친구는 둥실거리는 상자째로 자리를 잡는다.
+  if (layers.layers.buddy) put(buddyEl, layers.layers.buddy)
+
+  // z는 머리 오른쪽 위에서 떠오른다.
+  const [bx, by, bw, bh] = layers.layers.base ?? layers.view
+  for (const z of petEl.querySelectorAll('.z')) {
+    z.style.left = `${(bx - vx + bw * 0.78) * s}px`
+    z.style.top = `${(by - vy + bh * 0.12) * s}px`
+  }
+}
+
+/** Main owns screen coordinates. These responsive offsets also hold the same
+ * screen anchor during a native window resize, before the next IPC arrives. */
+function applyWindowLayout(next) {
+  if (!next) return
+  geometry = next
+  const s = next.stage
+  if (s) {
+    stage.style.left = Number.isFinite(s.anchorX) ? `calc((100% - ${s.width}px) * ${s.anchorX})` : `${s.left}px`
+    stage.style.top = Number.isFinite(s.anchorY) ? `calc((100% - ${s.height}px) * ${s.anchorY})` : `${s.top}px`
+  }
+}
+
+/** 쓰다듬는 영역(화면 px, stage 기준): 그림 꼭대기부터 눈 바로 위까지. 얼굴과 몸은 말 거는 자리다. */
+function headZone() {
+  const L = layers.layers
+  const [vx, vy] = viewRect()
+  const [bx, by, bw, bh] = L.base ?? layers.view
+  const eyes = L.eyes_open ?? L.eyes_closed
+  // 눈 정보가 없으면 그림 위쪽 4분의 1을 머리로 본다.
+  const brow = eyes ? eyes[1] : by + bh * 0.25
+  // 좌우는 눈을 중심으로 넉넉하게.
+  const cx = eyes ? eyes[0] + eyes[2] / 2 : bx + bw / 2
+  const half = eyes ? eyes[2] * 0.95 : bw / 2
+  const ox = parseFloat(petEl.style.left) || 0
+  const oy = parseFloat(petEl.style.top) || 0
+  const left = ox + (cx - half - vx) * scale
+  const width = half * 2 * scale
+  return {
+    left: cfg.flip ? stage.clientWidth - left - width : left,
+    top: oy + (by - vy) * scale,
+    width,
+    height: (brow - by) * scale,
+  }
+}
+
+function onHead(e) {
+  if (!cfg.petting) return false
+  const box = stage.getBoundingClientRect()
+  const x = e.clientX - box.left
+  const y = e.clientY - box.top
+  const z = headZone()
+  return x >= z.left && x <= z.left + z.width && y >= z.top && y <= z.top + z.height
+}
+
+// ── 눈·입 애니메이션 ───────────────────────────────────────────────────
+const EYE_ROLE = { open: 'eyes_open', closed: 'eyes_closed', happy: 'eyes_happy', x: 'eyes_x' }
+let blinkTimer = null
+let flapTimer = null
+
+/** 그림 한 장을 잠깐 움직인다. 하던 움직임은 끊고 새로 시작한다. */
+function play(node, frames, duration, easing = 'ease-out') {
+  if (!node || cfg.reduceMotion || !visible) return
+  for (const running of node.getAnimations()) if (running.id === 'pop') running.cancel()
+  node.animate(frames, { duration, easing, id: 'pop' })
+}
+
+function setMode(next) {
+  if (next === mode) return
+  mode = next
+  petEl.className = petEl.className.replace(/\bmode-\S+/g, '').trim() + ` mode-${mode}`
+  applyFace()
+}
+
+function applyFace() {
+  if (!cfg || !layers) return
+  clearTimeout(blinkTimer)
+  clearTimeout(flapTimer)
+  const eyes = { held: 'x', thinking: 'closed', sleeping: 'closed', dozing: 'closed', happy: 'happy', pleased: 'happy', oops: 'x', petted: 'x' }[mode] ?? 'open'
+  const mouth = { sleeping: 'sleep', oops: 'sleep' }[mode] ?? 'closed'
+  const changed = petEl.dataset.eyes !== eyes
+  petEl.dataset.eyes = eyes
+  petEl.dataset.mouth = mouth
+  // 표정이 바뀌는 순간 눈이 한 번 통 튄다.
+  if (changed) {
+    play(imgs[EYE_ROLE[eyes]], [{ transform: 'scale(0.9, 0.62)' }, { transform: 'scale(1.05, 1.12)', offset: 0.55 }, { transform: 'scale(1, 1)' }], 240)
+  }
+  if (visible && eyes === 'open') scheduleBlink()
+  if (visible && mode === 'talking') flap(false)
+}
+
+/** 몇 초에 한 번 깜빡, 가끔은 두 번 연속. */
+function scheduleBlink() {
+  blinkTimer = setTimeout(() => blink(Math.random() < 0.25 ? 2 : 1), rand(1800, 5000))
+}
+/** 눈꺼풀이 눌리듯 감겼다가, 살짝 더 크게 뜨고 쫀득하게 제자리로 돌아온다. */
+function blink(times) {
+  if (!visible) return
+  const calm = cfg.reduceMotion
+  play(imgs.eyes_open, [{ transform: 'scale(1, 1)' }, { transform: 'scale(1.06, 0.2)' }], 80, 'ease-in')
+  blinkTimer = setTimeout(
+    () => {
+      petEl.dataset.eyes = 'closed'
+      play(imgs.eyes_closed, [{ transform: 'scale(1.05, 0.6)' }, { transform: 'scale(1, 1)' }], 90)
+      blinkTimer = setTimeout(() => {
+        petEl.dataset.eyes = 'open'
+        play(
+          imgs.eyes_open,
+          [
+            { transform: 'scale(1.06, 0.2)' },
+            { transform: 'scale(0.965, 1.14)', offset: 0.46 },
+            { transform: 'scale(1.02, 0.95)', offset: 0.74 },
+            { transform: 'scale(1, 1)' },
+          ],
+          320,
+        )
+        if (times > 1) blinkTimer = setTimeout(() => blink(times - 1), rand(150, 230))
+        else scheduleBlink()
+      }, rand(70, 130))
+    },
+    calm ? 0 : 75,
+  )
+}
+
+/** 말하는 동안: 입이 랜덤한 간격으로 열렸다 닫히고, 가끔 단어 사이처럼 잠깐 쉰다. */
+function flap(open) {
+  if (!visible) return
+  open = Math.random() < 0.8 ? !open : open
+  petEl.dataset.mouth = open ? 'open' : 'closed'
+  if (open) play(imgs.mouth_open, [{ transform: 'scale(0.82, 0.55)' }, { transform: 'scale(1, 1)' }], 80)
+  if (open && (bubbleOpen || local !== 'talking')) sound.talk()
+  let ms = open ? rand(90, 260) : rand(70, 220)
+  if (!open && Math.random() < 0.1) ms = rand(350, 700)
+  flapTimer = setTimeout(() => flap(open), ms)
+}
+
+// ── 어떤 상태를 보여 줄지 ──────────────────────────────────────────────
+let local = null // 펫과 직접 대화 중일 때의 상태
+let localUntil = 0
+let localAfter = null
+let cc = null // Claude Code 쪽 mod가 알려 준 상태
+let limitUntil = 0 // 사용 제한이 풀리는 시각(ms)
+let dozing = false
+let idleSince = Date.now()
+let touched = null // 쓰다듬는 중이면 'petted', 손을 뗀 직후면 'pleased'
+let touchUntil = 0
+
+function setLocal(next, ms, after = null) {
+  local = next
+  localUntil = next && ms ? Date.now() + ms : 0
+  localAfter = after
+  recompute()
+}
+
+function claudeDeadline() {
+  if (!cc || !cfg.followClaudeCode) return 0
+  const at = Number(cc.at) || 0
+  if (cc.mode === 'sleeping') return cc.resetsAt ? Date.parse(cc.resetsAt) : at + 6 * 3600_000
+  const duration = { happy: HAPPY_MS, oops: OOPS_MS, thinking: STALE_MS, talking: STALE_MS, working: STALE_MS }[cc.mode]
+  return duration ? at + duration : 0
+}
+
+function expireStates(now) {
+  let expiredAt = 0
+  if (localUntil && now >= localUntil) {
+    expiredAt = localUntil
+    local = localAfter
+    localAfter = null
+    localUntil = local === 'happy' ? expiredAt + HAPPY_MS : 0
+    if (localUntil && now >= localUntil) {
+      expiredAt = localUntil
+      local = null
+      localUntil = 0
+    }
+  }
+  if (touchUntil && now >= touchUntil) {
+    expiredAt = Math.max(expiredAt, touchUntil)
+    if (touched === 'petted') {
+      touched = 'pleased'
+      touchUntil += PLEASED_MS
+    } else {
+      touched = null
+      touchUntil = 0
+    }
+    if (touchUntil && now >= touchUntil) {
+      expiredAt = Math.max(expiredAt, touchUntil)
+      touched = null
+      touchUntil = 0
+    }
+  }
+  return expiredAt
+}
+
+/** One timeout for the next actual state transition; idle does no polling. */
+function scheduleStateUpdate() {
+  clearTimeout(stateTimer)
+  stateTimer = null
+  if (!visible || !cfg) return
+  const now = Date.now()
+  const deadlines = [localUntil, touchUntil, limitUntil, claudeDeadline()]
+  if (mode === 'idle' && cfg.dozeMinutes > 0) deadlines.push(idleSince + cfg.dozeMinutes * 60_000)
+  const next = deadlines.filter(at => Number.isFinite(at) && at > now).sort((a, b) => a - b)[0]
+  if (next) stateTimer = setTimeout(recompute, Math.min(2147483647, Math.max(1, next - now)))
+}
+
+function claudeCodeMode() {
+  if (!cc || !cfg.followClaudeCode || typeof cc.mode !== 'string') return null
+  const age = Date.now() - (Number(cc.at) || 0)
+  switch (cc.mode) {
+    case 'sleeping': {
+      const until = cc.resetsAt ? Date.parse(cc.resetsAt) : (Number(cc.at) || 0) + 6 * 3600_000
+      return until > Date.now() ? 'sleeping' : 'idle'
+    }
+    case 'happy':
+      return age < HAPPY_MS ? 'happy' : 'idle'
+    case 'oops':
+      return age < OOPS_MS ? 'oops' : 'idle'
+    case 'thinking':
+    case 'talking':
+    case 'working':
+      return age < STALE_MS ? cc.mode : 'idle'
+    default:
+      return 'idle'
+  }
+}
+
+function recompute() {
+  if (!cfg) return
+  const now = Date.now()
+  const expiredAt = expireStates(now)
+  // 쓰다듬기가 가장 먼저, 그다음 펫과의 대화, 사용 제한, Claude Code 순서.
+  let next = (dragging ? 'held' : null) ?? touched ?? local ?? (Date.now() < limitUntil ? 'sleeping' : null) ?? claudeCodeMode() ?? 'idle'
+  if (next === 'idle') {
+    if (mode !== 'idle' && mode !== 'dozing') idleSince = Math.max(idleSince, expiredAt || Math.min(now, claudeDeadline() || now))
+    if (cfg.dozeMinutes > 0 && now - idleSince >= cfg.dozeMinutes * 60_000) dozing = true
+    if (dozing) next = 'dozing'
+  } else {
+    dozing = false
+    idleSince = Date.now()
+  }
+  setMode(next)
+  scheduleStateUpdate()
+}
+
+function wake() {
+  dozing = false
+  idleSince = Date.now()
+  recompute()
+}
+
+// ── 쓰다듬기 ───────────────────────────────────────────────────────────
+let pats = 0
+let lastPat = 0
+let lastRub = 0
+
+function startPetting() {
+  touchUntil = 0
+  touched = 'petted'
+  wake()
+}
+
+/** 한 번 톡: 누를 때마다 몸이 꾹 눌렸다 튀어 오르고, 연달아 누를수록 더 깊게 눌린다. */
+function pat() {
+  const now = performance.now()
+  pats = now - lastPat < PAT_COMBO_MS ? pats + 1 : 1
+  lastPat = now
+  startPetting()
+  sound.pat(pats)
+  boing(0.055 + 0.05 * (Math.min(pats, 8) / 8))
+  play(imgs.eyes_x, [{ transform: 'scale(1.1, 0.72)' }, { transform: 'scale(0.96, 1.1)', offset: 0.5 }, { transform: 'scale(1, 1)' }], 260)
+  heart()
+}
+
+function boing(depth) {
+  if (cfg.reduceMotion || !visible) return
+  for (const running of bodyEl.getAnimations()) if (running.id === 'boing') running.cancel()
+  const at = (x, y) => ({ transform: `scale(${(1 + depth * x).toFixed(4)}, ${(1 + depth * y).toFixed(4)})` })
+  bodyEl.animate(
+    [at(0.4, -0.5), { ...at(0.85, -1), offset: 0.2 }, { ...at(-0.45, 0.6), offset: 0.48 }, { ...at(0.2, -0.24), offset: 0.74 }, at(0, 0)],
+    { duration: 430, easing: 'ease-out', id: 'boing' },
+  )
+}
+
+/** 머리 위로 작은 하트가 하나 떠오른다. */
+function heart() {
+  if (cfg.reduceMotion || !visible || stage.querySelectorAll('.heart').length >= MAX_HEARTS) return
+  const zone = headZone()
+  const node = document.createElement('i')
+  node.className = 'heart'
+  node.innerHTML = HEART
+  node.style.left = `${zone.left + zone.width * rand(0.18, 0.82)}px`
+  node.style.top = `${zone.top + zone.height * rand(0.3, 0.75)}px`
+  node.style.setProperty('--drift', `${rand(-12, 12).toFixed(1)}px`)
+  node.style.setProperty('--lean', `${rand(-20, 20).toFixed(0)}deg`)
+  node.addEventListener('animationend', () => node.remove())
+  stage.appendChild(node)
+}
+
+/** 손을 떼면 조금 더 말랑거리다가, 기분 좋은 얼굴로 한 번 출렁이고 돌아온다. */
+function stopPetting(linger = PET_LINGER_MS) {
+  if (touched !== 'petted') return
+  if (linger <= 0) {
+    touched = 'pleased'
+    touchUntil = Date.now() + PLEASED_MS
+    recompute()
+    return
+  }
+  touchUntil = Date.now() + linger
+  scheduleStateUpdate()
+}
+
+// ── 말풍선과 대화 ──────────────────────────────────────────────────────
+let busy = false
+let speechStartedAt = null
+let lastTouch = Date.now()
+let bubbleOpen = false
+const touch = () => { lastTouch = Date.now(); if (!busy) scheduleStateUpdate() }
+
+function showHint() {
+  answer.textContent = HINT
+  answer.classList.add('hint')
+}
+function showAnswer(text) {
+  answer.classList.remove('hint')
+  answer.textContent = text
+  answer.scrollTop = answer.scrollHeight
+}
+function showWaiting() {
+  answer.classList.remove('hint')
+  answer.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>'
+}
+
+function openBubble() {
+  if (cfg.chatEnabled === false) return
+  bubbleOpen = true
+  window.pet.expand(true)
+}
+function closeBubble(immediate = false) {
+  if (!bubbleOpen) return
+  bubbleOpen = false
+  sound.stop()
+  window.pet.expand(false)
+}
+
+const limitTime = () => new Date(limitUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+form.addEventListener('submit', e => {
+  e.preventDefault()
+  const text = input.value.trim()
+  if (!text || busy || cfg.chatEnabled === false || e.isComposing) return
+  sound.unlock()
+  if (Date.now() < limitUntil) {
+    showAnswer(`zzz… 사용 제한에 걸려서 ${limitTime()}까지 쉬는 중이야.`)
+    return
+  }
+  input.value = ''
+  busy = true
+  speechStartedAt = null
+  sendBtn.disabled = true
+  cancelBtn.hidden = false
+  showWaiting()
+  touch()
+  setLocal('thinking')
+  window.pet.ask(text)
+})
+
+function finish() {
+  busy = false
+  sendBtn.disabled = false
+  cancelBtn.hidden = true
+  sound.stop()
+  touch()
+}
+
+window.pet.onDelta(whole => {
+  if (!busy) return
+  if (local !== 'talking') {
+    speechStartedAt = performance.now()
+    setLocal('talking')
+  }
+})
+window.pet.onDone(text => {
+  if (!busy) return
+  showAnswer(text)
+  finish()
+  // Some providers deliver a single final event. Give that reply a visible,
+  // audible speaking beat too, without delaying the user's next question.
+  const spokenFor = speechStartedAt === null ? 0 : performance.now() - speechStartedAt
+  const remaining = Math.max(0, Math.min(1500, Math.max(500, Array.from(text).length * 25)) - spokenFor)
+  if (remaining > 0 && bubbleOpen && visible && cfg.chatEnabled !== false) {
+    setLocal('talking', remaining, 'happy')
+    sound.talk()
+  } else setLocal('happy', HAPPY_MS)
+})
+window.pet.onError(message => {
+  if (!busy) return
+  finish()
+  if (Date.now() < limitUntil) {
+    showAnswer(`zzz… 사용 제한에 걸렸어. ${limitTime()}에 다시 일어날게.`)
+    setLocal(null)
+  } else {
+    showAnswer(`앗, 문제가 생겼어: ${message}`)
+    setLocal('oops', OOPS_MS)
+  }
+})
+window.pet.onRateLimit(info => {
+  // 거절된 창이 있으면 그 리셋 시각까지 잔다(초 단위 epoch).
+  if (info && info.status === 'rejected' && Number(info.resetsAt) > 0) limitUntil = Number(info.resetsAt) * 1000
+  recompute()
+})
+window.pet.onCleared(() => {
+  finish()
+  limitUntil = 0
+  setLocal(null)
+  showHint()
+})
+cancelBtn.addEventListener('click', () => {
+  window.pet.cancel()
+  finish()
+  setLocal(null)
+  showAnswer('잠깐 쉬었다가 다시 이야기하자.')
+})
+closeBtn.addEventListener('click', closeBubble)
+// Claude Code가 깨웠거나, 이미 떠 있는데 또 불렀을 때: 반갑게 한 번 폴짝.
+window.pet.onHello(() => {
+  wake()
+  if (!local) setLocal('happy', HAPPY_MS)
+})
+
+// ── 고정 모드 ──────────────────────────────────────────────────────────
+// 고정 모드에서는 자리를 옮길 수 없고 마우스도 그냥 통과한다.
+// Claude 창이 앞에 있을 때 펫 위에 마우스를 올려 두면(armed) 우클릭을 받는다.
+let locked = false
+let armed = true
+
+function onInput(state) {
+  locked = !!state.locked
+  armed = !!state.armed
+  stage.classList.toggle('locked', locked)
+  if (!cfg) return // 설정을 받기 전에 온 소식은 받아 두기만 한다
+  stage.classList.toggle('can-chat', locked && cfg.lockedChat && cfg.chatEnabled !== false)
+  if (locked && !cfg.lockedChat && bubbleOpen && !busy) closeBubble()
+}
+window.pet.onInput(onInput)
+
+// ── 마우스: 머리는 쓰다듬기, 몸은 누르면 말풍선·끌면 이동, 오른쪽 클릭은 메뉴 ──
+let down = null // { x, y, head }
+let dragging = false
+let pendulum = null
+let heldFrame = null
+let heldTick = null
+
+function stopHeldMotion() {
+  if (heldFrame !== null) cancelAnimationFrame(heldFrame)
+  heldFrame = null
+  heldTick = null
+  pendulum?.stop()
+  pendulum = null
+  bodyEl.style.removeProperty('transform')
+  bodyEl.style.removeProperty('transform-origin')
+}
+
+function beginHeldMotion(e) {
+  stopHeldMotion()
+  for (const running of bodyEl.getAnimations()) running.cancel()
+  if (cfg.reduceMotion || cfg.dragPhysics === false || !visible) return
+  const box = petEl.getBoundingClientRect()
+  // The artwork can be mirrored; translate the screen grab point back into
+  // its local coordinates before applying rotation to the inner body.
+  const visualX = down.clientX - box.left
+  const x = cfg.flip ? box.width - visualX : visualX
+  const y = down.clientY - box.top
+  bodyEl.style.transformOrigin = `${x}px ${y}px`
+  pendulum = window.PetMotion.create({ length: cfg.size * 0.5 })
+  pendulum.begin(down.x, down.at)
+  pendulum.move(e.screenX, e.timeStamp)
+  heldTick = at => {
+    heldFrame = null
+    if (!dragging || !pendulum || !visible) return
+    // Mirroring must not reverse the visual response to the user's hand.
+    const angle = pendulum.step(at) * (cfg.flip ? -1 : 1)
+    bodyEl.style.transform = `rotate(${angle.toFixed(3)}deg)`
+    if (!pendulum.isSettled()) wakeHeldMotion()
+  }
+  wakeHeldMotion()
+}
+
+function wakeHeldMotion() {
+  if (heldFrame === null && heldTick && visible) heldFrame = requestAnimationFrame(heldTick)
+}
+
+stage.addEventListener('pointerdown', e => {
+  if (!cfg || e.button !== 0 || down) return
+  sound.unlock()
+  const head = onHead(e) && (!locked || cfg.lockedPetting)
+  down = { x: e.screenX, y: e.screenY, clientX: e.clientX, clientY: e.clientY, at: e.timeStamp, head, pointerId: e.pointerId }
+  dragging = false
+  stage.setPointerCapture(e.pointerId)
+  if (head) pat()
+})
+stage.addEventListener('pointermove', e => {
+  if (!cfg) return
+  if (!down) {
+    stage.classList.toggle('over-head', onHead(e) && (!locked || cfg.lockedPetting))
+    return
+  }
+  if (down.pointerId !== e.pointerId) return
+  if (down.head) {
+    // 머리 위에서 움직이는 건 끌기가 아니라 문지르기다.
+    if (e.timeStamp - lastRub > 320) {
+      lastRub = e.timeStamp
+      heart()
+      sound.pat(pats)
+    }
+    return
+  }
+  if (locked || cfg.dragEnabled === false) return
+  const dx = e.screenX - down.x
+  const dy = e.screenY - down.y
+  if (!dragging && Math.hypot(dx, dy) > DRAG_START_PX) {
+    dragging = true
+    stage.classList.add('dragging')
+    window.pet.drag('start')
+    recompute()
+    beginHeldMotion(e)
+  }
+  if (dragging) {
+    pendulum?.move(e.screenX, e.timeStamp)
+    wakeHeldMotion()
+    window.pet.drag('move', dx, dy)
+  }
+})
+const release = e => {
+  if (!down) return
+  if (e.pointerId !== undefined && down.pointerId !== e.pointerId) return
+  const { head } = down
+  const pointerId = down.pointerId
+  down = null
+  stage.classList.remove('dragging')
+  stopHeldMotion()
+  if (head) stopPetting()
+  else if (dragging) {
+    window.pet.drag('end')
+    if (e.type === 'pointerup') boing(0.05) // 내려놓으면 한 번 출렁
+  } else if (e.type === 'pointerup' && cfg.chatEnabled !== false && (!locked || cfg.lockedChat)) {
+    wake()
+    if (!bubbleOpen) openBubble()
+    else closeBubble()
+  }
+  dragging = false
+  recompute()
+  if (stage.hasPointerCapture(pointerId)) stage.releasePointerCapture(pointerId)
+}
+stage.addEventListener('pointerup', release)
+stage.addEventListener('pointercancel', release)
+stage.addEventListener('lostpointercapture', release)
+window.addEventListener('blur', () => release({ type: 'blur' }))
+stage.addEventListener('pointerleave', () => stage.classList.remove('over-head'))
+window.addEventListener('contextmenu', e => {
+  e.preventDefault()
+  window.pet.menu()
+})
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && bubbleOpen) closeBubble()
+  if (e.target === stage && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault()
+    if (!cfg || cfg.chatEnabled === false || (locked && !cfg.lockedChat)) return
+    sound.unlock()
+    wake()
+    if (!bubbleOpen) openBubble()
+    else closeBubble()
+  }
+})
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.isComposing) e.preventDefault()
+})
+input.addEventListener('input', touch)
+
+// ── 시작 ───────────────────────────────────────────────────────────────
+window.pet.onLayout?.(applyWindowLayout)
+window.pet.onChatVisibility?.(state => {
+  bubbleOpen = !!state.open
+  if (!bubbleOpen) sound.stop()
+})
+window.pet.onChatStarted?.(() => {
+  busy = true
+  speechStartedAt = null
+  sound.unlock()
+  setLocal('thinking')
+})
+window.pet.onChatCancelled?.(() => {
+  finish()
+  setLocal(null)
+})
+window.pet.onVisibility?.(value => {
+  mainVisible = !!value
+  syncVisibility()
+})
+document.addEventListener('visibilitychange', syncVisibility)
+
+function syncVisibility() {
+  const next = mainVisible && document.visibilityState !== 'hidden'
+  if (next === visible) return
+  visible = next
+  document.body.classList.toggle('is-hidden', !visible)
+  sound.setVisible(visible)
+  if (!visible) {
+    clearTimeout(stateTimer)
+    stateTimer = null
+    clearTimeout(blinkTimer)
+    clearTimeout(flapTimer)
+    if (down) release({ type: 'hidden' })
+    stopHeldMotion()
+    pausedAnimations = document.getAnimations().filter(animation => animation.playState === 'running')
+    for (const animation of pausedAnimations) animation.pause()
+  } else {
+    for (const animation of pausedAnimations) {
+      if (animation.playState === 'paused') animation.play()
+    }
+    pausedAnimations = []
+    recompute()
+    applyFace()
+  }
+}
+
+window.pet.onCfg(next => {
+  cfg = next
+  sound.configure(cfg)
+  if (down && (cfg.locked || cfg.dragEnabled === false || (down.head && !cfg.petting))) release({ type: 'settings' })
+  if (cfg.reduceMotion || cfg.dragPhysics === false) stopHeldMotion()
+  if (cfg.chatEnabled === false) closeBubble(true)
+  if (!layers) return
+  layout()
+  onInput({ locked: cfg.locked, armed })
+  recompute()
+})
+window.pet.onClaudeCode(state => {
+  cc = state
+  recompute()
+})
+
+window.pet.init().then(init => {
+  cfg = init.cfg
+  sound.configure(cfg)
+  layers = init.layers
+  bust = init.bust
+  cc = init.ccState
+  if (typeof init.chatOpen === 'boolean') bubbleOpen = init.chatOpen
+  if (typeof init.visible === 'boolean') mainVisible = init.visible
+  applyWindowLayout(init.layout || geometry)
+  build()
+  layout()
+  applyFace()
+  onInput({ locked, armed })
+  recompute()
+  syncVisibility()
+})
+window.addEventListener('pagehide', () => {
+  clearTimeout(stateTimer)
+  clearTimeout(blinkTimer)
+  clearTimeout(flapTimer)
+  stopHeldMotion()
+  sound.dispose()
+})

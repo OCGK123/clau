@@ -1,0 +1,1 @@
+{ "name": "clau", "version": "0.3.0", "description": "Tells Clau, the desktop pet, what Claude is doing, and adds /clau to call it", "types": "./types/index.d.ts" }

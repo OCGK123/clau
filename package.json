@@ -1,0 +1,25 @@
+{
+  "name": "clau",
+  "productName": "Clau",
+  "version": "0.4.0",
+  "description": "앱 창 한쪽에 사는 작은 친구. Claude와 Codex로 대화하고 손길에 반응해요.",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "assets": "python3 scripts/build-assets.py",
+    "build": "node scripts/build.mjs",
+    "build:linux": "node scripts/build.mjs linux",
+    "build:win": "node scripts/build.mjs win",
+    "build:mac": "node scripts/build.mjs mac",
+    "test": "node scripts/test.mjs",
+    "test:ui": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.3.1"
+  },
+  "dependencies": {
+    "dbus-next": "^0.10.2"
+  }
+}
