@@ -65,6 +65,7 @@ const DEFAULTS = {
   talkingSound: 'soft',
   pettingSoundFile: null,
   talkingSoundFile: null,
+  chatSound: true, // 말풍선 열기·닫기·보내기·대답·신남 효과음(효과음 켜기가 켜져 있을 때)
   dozeMinutes: 3, // 이만큼 조용하면 졸기. 0이면 졸지 않음
   reduceMotion: false, // 움직임 줄이기
 
@@ -113,7 +114,7 @@ function normalize(raw) {
   }
   next.dozeMinutes = clampInt(next.dozeMinutes, 0, 120, DEFAULTS.dozeMinutes)
   next.soundVolume = clampInt(next.soundVolume, 0, 100, DEFAULTS.soundVolume)
-  next.pettingSound = pick(next.pettingSound, ['none', 'chime', 'pop', 'custom'], DEFAULTS.pettingSound)
+  next.pettingSound = pick(next.pettingSound, ['none', 'chime', 'pop', 'squee', 'custom'], DEFAULTS.pettingSound)
   next.talkingSound = pick(next.talkingSound, ['none', 'soft', 'type', 'custom'], DEFAULTS.talkingSound)
   for (const kind of ['petting', 'talking']) {
     const meta = next[`${kind}SoundFile`]

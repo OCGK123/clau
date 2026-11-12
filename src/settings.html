@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' file:" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' file:; media-src 'self' file:" />
     <title>클로 설정</title>
     <link rel="stylesheet" href="settings.css" />
   </head>
@@ -203,7 +203,7 @@
         </div>
         <div class="row">
           <label for="pettingSound">쓰다듬을 때</label>
-          <div class="control-pair"><select id="pettingSound" data-key="pettingSound"><option value="chime">맑은 종소리</option><option value="pop">톡톡</option><option value="custom">직접 고른 파일</option><option value="none">소리 없음</option></select><button type="button" id="previewPetting" aria-label="쓰다듬기 소리 미리 듣기">듣기</button></div>
+          <div class="control-pair"><select id="pettingSound" data-key="pettingSound"><option value="chime">맑은 종소리</option><option value="pop">톡톡</option><option value="squee">꺅 (깜짝 놀람)</option><option value="custom">직접 고른 파일</option><option value="none">소리 없음</option></select><button type="button" id="previewPetting" aria-label="쓰다듬기 소리 미리 듣기">듣기</button></div>
         </div>
         <div class="row stack sound-file-row">
           <div class="head"><span id="pettingFileName" class="file-name"></span><button type="button" id="choosePettingSound">파일 고르기</button></div>
@@ -216,6 +216,10 @@
         <div class="row stack sound-file-row">
           <div class="head"><span id="talkingFileName" class="file-name"></span><button type="button" id="chooseTalkingSound">파일 고르기</button></div>
           <p id="talkingFileStatus" class="status" role="status">짧은 소리를 고르면 말할 때 겹치지 않고 재생해요.</p>
+        </div>
+        <div class="row">
+          <label for="chatSound">채팅 효과음</label>
+          <div class="control-pair"><input type="checkbox" class="switch" id="chatSound" data-key="chatSound" /><button type="button" id="previewChat" aria-label="채팅 효과음 미리 듣기">듣기</button></div>
         </div>
       </section>
 
@@ -266,6 +270,7 @@
     </main>
 
     <script src="pet-sound.js"></script>
+    <script src="chat-sound.js"></script>
     <script src="settings.js"></script>
   </body>
 </html>

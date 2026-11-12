@@ -43,10 +43,11 @@ async function renderer() {
     focus() {}
     getBoundingClientRect() { return { left: 0, top: 0, width: 184, height: 220 } }
   }
-  const elements = Object.fromEntries(['stage', 'pet', 'body', 'buddy', 'bubble', 'answer', 'ask', 'q', 'send', 'cancel', 'closeBubble'].map(name => [name, new Element()]))
+  const elements = Object.fromEntries(['stage', 'pet', 'mover', 'body', 'buddy', 'spinner', 'fx', 'bubble', 'answer', 'ask', 'q', 'send', 'cancel', 'closeBubble'].map(name => [name, new Element()]))
   elements.pet.dataset.eyes = 'open'
   elements.pet.className = 'mode-idle'
   elements.bubble.hidden = true
+  elements.spinner.hidden = true
   const body = new Element()
   const document = { body, visibilityState: 'visible', getElementById: name => elements[name], createElement: name => new Element(name), createElementNS: (_namespace, name) => new Element(name), addEventListener() {}, getAnimations: () => [] }
   const pet = {
@@ -55,7 +56,10 @@ async function renderer() {
   }
   for (const name of ['Cfg', 'Input', 'Hello', 'ClaudeCode', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Layout', 'Visibility', 'ChatVisibility', 'ChatStarted', 'ChatCancelled', 'ChatProvider']) pet[`on${name}`] = fn => { callbacks[name] = fn }
   const audio = { configure() {}, unlock() {}, pat() {}, talk() {}, stop() { audioStops.push('all') }, stopSynth() { audioStops.push('synth') }, dispose() {}, setVisible: value => audioVisibility.push(value) }
-  const window = { pet, PetMotion: require('../src/pet-motion'), PetSound: { create: () => audio }, addEventListener() {} }
+  // 몸짓 엔진·이펙트·녹음 효과음은 각자 테스트가 따로 있다. 여기서는 호출 기록만 남긴다.
+  const animator = { modes: [], paused: [], attach() {}, setUnit() {}, setCalm() {}, setMode: value => animator.modes.push(value), setPaused: value => animator.paused.push(value), restart() {}, bounce() {}, untilSquishEnd: () => 0 }
+  const files = { played: [], configure() {}, setVisible() {}, play: name => files.played.push(name), stop() {} }
+  const window = { pet, PetMotion: require('../src/pet-motion'), PetSound: { create: () => audio }, PetAnimator: animator, PetFx: { attach() {}, setOff() {}, burst() {} }, ChatSound: { create: () => files }, addEventListener() {} }
   class ClockDate extends Date { static now() { return now } }
   const context = vm.createContext({ window, document, Date: ClockDate, performance: { now: () => now },
     setTimeout: (fn, ms) => { const key = ++id; timers.set(key, { at: now + ms, fn }); return key }, clearTimeout: key => timers.delete(key),
@@ -78,7 +82,7 @@ async function renderer() {
   }
   function frame() { for (const [key, fn] of [...frames]) { frames.delete(key); fn(now) } }
   const geometry = { stage: { left: 78, top: 222, width: 184, height: 220, anchorX: 0.5, anchorY: 1 }, bubble: { left: 0, top: 0, width: 340, height: 210, originX: 170, originY: 210 } }
-  return { evaluate, advance, frame, callbacks, elements, timers, frames, expansions, audioVisibility, audioStops, geometry }
+  return { evaluate, advance, frame, callbacks, elements, timers, frames, expansions, audioVisibility, audioStops, geometry, animator, files }
 }
 
 test('idle uses only state deadlines, and hiding suspends every renderer timer and frame', async () => {
@@ -238,4 +242,23 @@ test('fallback transitions discard the old speaking beat and wait for the next p
   assert.equal(r.evaluate('mode'), 'thinking')
   r.callbacks.Delta('새 서비스의 응답')
   assert.equal(r.evaluate('mode'), 'talking')
+})
+
+test('state changes drive the motion engine, hiding pauses it, and chat joy plays its sound', async () => {
+  const r = await renderer()
+  r.callbacks.ChatVisibility({ open: true })
+  r.callbacks.ChatStarted()
+  assert.equal(r.animator.modes.at(-1), 'thinking')
+  assert.equal(r.elements.spinner.hidden, false)
+  r.callbacks.Delta('응답')
+  r.callbacks.Done('응답')
+  r.advance(500)
+  assert.equal(r.animator.modes.at(-1), 'happy')
+  assert.deepEqual(r.files.played, ['chatHappy'])
+  r.advance(200)
+  assert.equal(r.elements.spinner.hidden, true)
+  r.callbacks.Visibility(false)
+  assert.equal(r.animator.paused.at(-1), true)
+  r.callbacks.Visibility(true)
+  assert.equal(r.animator.paused.at(-1), false)
 })

@@ -9,6 +9,7 @@ let loadingApps = false
 let saveQueue = Promise.resolve()
 let choosingSound = false
 const previewSound = PetSound.create({ onError: ({ kind, message }) => setStatus(el(`${kind}FileStatus`), message, 'bad') })
+const previewFiles = ChatSound.create() // 녹음 효과음(꺅, 채팅) 미리 듣기
 
 // ── 탭 ─────────────────────────────────────────────────────────────────
 function showTab(name) {
@@ -63,6 +64,7 @@ function render() {
   el('opacityOut').textContent = `${cfg.opacity}%`
   el('soundVolumeOut').textContent = `${cfg.soundVolume}%`
   previewSound.configure(cfg)
+  previewFiles.configure(cfg)
 
   // 조건이 맞을 때만 보이는 줄
   for (const row of document.querySelectorAll('[data-when]')) {
@@ -83,7 +85,8 @@ function render() {
   el('trayHow').hidden = !cfg.tray
   el('trayHow').textContent = mac ? '메뉴 막대의 클로 아이콘 메뉴에서' : '트레이의 클로 아이콘 메뉴에서'
   el('dragPhysics').disabled = !cfg.dragEnabled || cfg.reduceMotion
-  for (const id of ['soundVolume', 'pettingSound', 'talkingSound']) el(id).disabled = !cfg.soundEnabled
+  for (const id of ['soundVolume', 'pettingSound', 'talkingSound', 'chatSound']) el(id).disabled = !cfg.soundEnabled
+  el('previewChat').disabled = !cfg.soundEnabled || !cfg.soundVolume || cfg.chatSound === false
   el('previewPetting').disabled = !cfg.soundEnabled || !cfg.soundVolume || cfg.pettingSound === 'none'
   el('previewTalking').disabled = !cfg.soundEnabled || !cfg.soundVolume || cfg.talkingSound === 'none'
   for (const kind of ['petting', 'talking']) {
@@ -181,6 +184,13 @@ el('targetAppSelect').addEventListener('change', () => {
   if (app) apply({ targetAppSelection: { kind: app.kind, id: app.id, label: app.label } })
 })
 async function playPreview(kind) {
+  // '꺅'은 녹음 파일이라 따로 재생한다
+  if (kind === 'petting' && info.cfg.pettingSound === 'squee') {
+    previewFiles.configure(info.cfg)
+    previewFiles.preview('squee')
+    setStatus(el('pettingFileStatus'), '꺅 효과음을 재생해요.')
+    return
+  }
   previewSound.unlock()
   await saveQueue
   try {
@@ -221,6 +231,7 @@ el('previewPetting').addEventListener('click', () => playPreview('petting'))
 el('previewTalking').addEventListener('click', () => playPreview('talking'))
 el('choosePettingSound').addEventListener('click', () => chooseSound('petting'))
 el('chooseTalkingSound').addEventListener('click', () => chooseSound('talking'))
+el('previewChat').addEventListener('click', () => { previewFiles.configure(info.cfg); previewFiles.preview('chatOpen') })
 window.addEventListener('beforeunload', () => previewSound.dispose())
 window.pet.onSoundError?.(({kind, message}) => setStatus(el(`${kind}FileStatus`), message, 'bad'))
 
