@@ -171,7 +171,7 @@ const SPINNER_TOP_PX = 3 // 창 위쪽 끝에 붙어 살이 잘리지 않게
 let spinnerTimer = null
 function placeSpinner() {
   const z = headZone()
-  const size = spinner.offsetWidth || 34
+  const size = spinner.offsetWidth || 46
   const x = stage.offsetLeft + z.left + z.width / 2 - size / 2
   const y = stage.offsetTop + z.top - size * 0.75
   spinner.style.translate = `${Math.round(x - stage.offsetLeft)}px ${Math.round(Math.max(SPINNER_TOP_PX, y) - stage.offsetTop)}px`
@@ -746,7 +746,10 @@ window.addEventListener('contextmenu', e => {
   e.preventDefault()
   window.pet.menu()
 })
+// 포커스 테두리는 키보드로 조작할 때만: Tab을 누르면 켜고, 마우스로 누르면 끈다.
+window.addEventListener('pointerdown', () => document.body.classList.remove('keyboard'), true)
 window.addEventListener('keydown', e => {
+  if (e.key === 'Tab') document.body.classList.add('keyboard')
   if (e.key === 'Escape' && bubbleOpen) closeBubble()
   if (e.target === stage && (e.key === 'Enter' || e.key === ' ')) {
     e.preventDefault()

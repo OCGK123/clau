@@ -31,7 +31,11 @@ body {
 #stage.drag-disabled.chat-enabled {
   cursor: pointer;
 }
-#stage:focus-visible {
+/* 누르면 stage가 포커스를 받는데, 그때 네모 테두리가 보이지 않게 한다. 키보드(Tab)로 왔을 때만 표시. */
+#stage:focus {
+  outline: none;
+}
+body.keyboard #stage:focus-visible {
   outline: 2px dashed #b15b40;
   outline-offset: -3px;
   border-radius: 14px;
@@ -136,7 +140,6 @@ body {
 #pet .eyes,
 #pet .mouth {
   will-change: transform;
-  backface-visibility: hidden;
 }
 
 /* 깜빡임: 눈 그림은 찌그러뜨리지 않고, 눈꺼풀이 위에서 내려와 덮었다가 위로 걷힌다 */
@@ -163,14 +166,14 @@ body {
   top: 0;
   z-index: 4;
   box-sizing: border-box;
-  width: 34px;
-  height: 34px;
-  padding: 4px;
+  width: 46px;
+  height: 46px;
+  padding: 6px;
   border-radius: 50%;
   background: rgb(250 249 245 / 0.94);
-  box-shadow: 0 0 0 1px rgb(31 30 29 / 0.1), 0 3px 10px -2px rgb(0 0 0 / 0.35);
+  box-shadow: 0 0 0 1.5px rgb(31 30 29 / 0.18), 0 4px 12px -2px rgb(0 0 0 / 0.4);
   pointer-events: none;
-  --spoke: #3d3c38;
+  --spoke: #1f1e1d;
   animation: spinner-in 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 @media (prefers-color-scheme: dark) {
@@ -180,7 +183,7 @@ body {
 #spinner.leaving { animation: spinner-out 180ms cubic-bezier(0.4, 0, 1, 1) both; }
 #spinner svg { display: block; width: 100%; height: 100%; overflow: visible; }
 #spinner rect { fill: var(--spoke); animation: spoke-fade 1s steps(12, end) infinite; }
-@keyframes spoke-fade { 0% { opacity: 1; } 100% { opacity: 0.22; } }
+@keyframes spoke-fade { 0% { opacity: 1; } 100% { opacity: 0.15; } }
 @keyframes spinner-in { from { scale: 0; opacity: 0; } to { scale: 1; opacity: 1; } }
 @keyframes spinner-out { from { scale: 1; opacity: 1; } to { scale: 0.4; opacity: 0; } }
 
