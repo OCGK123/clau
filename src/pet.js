@@ -24,7 +24,6 @@ const PET_LINGER_MS = 650 // 손을 뗀 뒤에도 이만큼은 쓰다듬는 표�
 const STALE_MS = 10 * 60_000 // Claude Code 쪽 상태가 이보다 오래되면 믿지 않는다
 const DRAG_START_PX = 4
 const PAT_COMBO_MS = 600 // 이 안에 또 누르면 연타로 친다
-const REOPEN_GUARD_MS = 350 // 말풍선이 막 닫힌 직후의 클릭은 다시 열기로 보지 않는다
 const MAX_HEARTS = 8
 const HINT = '안녕, 나 클로야! 뭐든 물어봐.'
 const HEART = '<svg viewBox="0 0 20 18"><path d="M10 16.6C4.2 12.3 1.2 9.5 1.2 6a4.5 4.5 0 0 1 8.8-1.4A4.5 4.5 0 0 1 18.8 6c0 3.5-3 6.3-8.8 10.6z"/></svg>'
@@ -727,9 +726,13 @@ function wakeHeldMotion() {
 stage.addEventListener('pointerdown', e => {
   if (!cfg || e.button !== 0 || down) return
   finishSettle() // 되돌리는 중에 다시 잡으면 앞의 끌기를 먼저 끝맺는다
+  // 말풍선이 열려 있으면 캐릭터 어디를 눌러도(머리 포함) 누르는 순간 닫는다.
+  // 같은 클릭이 손을 뗄 때 다시 여는 일이 없게 표시해 둔다.
+  const closingChat = bubbleOpen
+  if (closingChat) closeBubble()
   sound.unlock()
   const head = onHead(e) && (!locked || cfg.lockedPetting)
-  down = { x: e.screenX, y: e.screenY, clientX: e.clientX, clientY: e.clientY, at: e.timeStamp, head, pointerId: e.pointerId }
+  down = { x: e.screenX, y: e.screenY, clientX: e.clientX, clientY: e.clientY, at: e.timeStamp, head, pointerId: e.pointerId, closingChat }
   dragging = false
   stage.setPointerCapture(e.pointerId)
   if (head) pat(e)
@@ -769,18 +772,16 @@ stage.addEventListener('pointermove', e => {
 const release = e => {
   if (!down) return
   if (e.pointerId !== undefined && down.pointerId !== e.pointerId) return
-  const { head } = down
+  const { head, closingChat } = down
   const pointerId = down.pointerId
   down = null
   stage.classList.remove('dragging')
   if (!dragging) stopHeldMotion() // 끌던 중이면 settleThenEndDrag가 기울기를 이어받아 되돌린다
   if (head) stopPetting()
   else if (dragging) settleThenEndDrag(e.type === 'pointerup')
-  else if (e.type === 'pointerup' && cfg.chatEnabled !== false && (!locked || cfg.lockedChat)) {
+  else if (e.type === 'pointerup' && !closingChat && cfg.chatEnabled !== false && (!locked || cfg.lockedChat)) {
     wake()
-    // 바깥을 눌러 막 닫힌 순간의 같은 클릭이면 다시 열지 않는다(닫기 → 열기 깜빡임 방지).
-    if (!bubbleOpen && performance.now() - chatClosedAt > REOPEN_GUARD_MS) openBubble()
-    else if (bubbleOpen) closeBubble()
+    if (!bubbleOpen) openBubble()
   }
   dragging = false
   recompute()
@@ -834,9 +835,7 @@ window.addEventListener('pointerup', () => reportHover(true, false), true)
 
 // ── 시작 ───────────────────────────────────────────────────────────────
 window.pet.onLayout?.(applyWindowLayout)
-let chatClosedAt = -Infinity
 window.pet.onChatVisibility?.(state => {
-  if (bubbleOpen && !state.open) chatClosedAt = performance.now()
   bubbleOpen = !!state.open
   if (!bubbleOpen) sound.stop()
 })
