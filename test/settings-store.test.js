@@ -19,7 +19,7 @@ test('new defaults preserve existing chat and interaction behavior with opt-in a
   assert.equal(cfg.dragEnabled, true)
   assert.equal(cfg.dragPhysics, true)
   assert.equal(cfg.petting, true)
-  assert.equal(cfg.soundEnabled, false)
+  assert.equal(cfg.soundEnabled, true)
   assert.equal(cfg.soundVolume, 35)
   assert.equal(cfg.targetAppSelection, null)
 })
@@ -50,7 +50,7 @@ test('legacy app strings migrate safely while the new settings get their default
   assert.equal(cfg.size,300)
   assert.equal(cfg.locked,true)
   assert.equal(cfg.chatEnabled,true)
-  assert.equal(cfg.soundEnabled,false)
+  assert.equal(cfg.soundEnabled,true)
 })
 
 test('new provider, app identity, sound presets, and volume reject malformed saved values', t => {
@@ -60,7 +60,7 @@ test('new provider, app identity, sound presets, and volume reject malformed sav
   assert.equal(cfg.codexPath,'')
   assert.equal(cfg.codexModel,'')
   assert.equal(cfg.soundVolume,100)
-  assert.equal(cfg.pettingSound,'chime')
+  assert.equal(cfg.pettingSound,'squee')
   assert.equal(cfg.talkingSound,'soft')
   assert.equal(cfg.targetAppSelection,null)
   cfg = store.set({soundVolume:-10,targetAppSelection:{kind:'unknown',id:'code'}})
@@ -73,14 +73,14 @@ test('reset removes saved service/app/audio choices and keeps the free position'
   const dir = isolated(t)
   store.init(dir)
   const position = {x:123,y:456}
-  store.set({position,attachPos:{corner:'tl',dx:5,dy:6},chatProvider:'codex',codexPath:'/custom/codex',soundEnabled:true,targetAppSelection:{kind:'windows',id:'Code',label:'Code'}})
+  store.set({position,attachPos:{corner:'tl',dx:5,dy:6},chatProvider:'codex',codexPath:'/custom/codex',soundEnabled:false,targetAppSelection:{kind:'windows',id:'Code',label:'Code'}})
   const reset = store.reset()
   assert.deepEqual(reset.position,position)
   assert.deepEqual(reset.attachPos,store.DEFAULT_ATTACH)
   assert.equal(reset.targetAppSelection,null)
   assert.equal(reset.chatProvider,'claude')
   assert.equal(reset.codexPath,'')
-  assert.equal(reset.soundEnabled,false)
+  assert.equal(reset.soundEnabled,true)
   assert.deepEqual(store.init(dir),reset)
 })
 

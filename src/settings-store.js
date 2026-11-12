@@ -56,9 +56,9 @@ const DEFAULTS = {
   petting: true, // 머리를 누르면 쓰다듬기
   dragEnabled: true,
   dragPhysics: true,
-  soundEnabled: false,
+  soundEnabled: true, // 처음부터 켜짐(병합 때 합의)
   soundVolume: 35,
-  pettingSound: 'chime',
+  pettingSound: 'squee', // 머리를 누르면 꺅
   talkingSound: 'soft',
   chatSound: true, // 말풍선 열기·닫기·보내기·대답·신남 효과음(효과음 켜기가 켜져 있을 때)
   dozeMinutes: 3, // 이만큼 조용하면 졸기. 0이면 졸지 않음
