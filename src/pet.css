@@ -98,6 +98,7 @@ body {
 #pet[data-eyes='closed'] [data-role='eyes_closed'],
 #pet[data-eyes='happy'] [data-role='eyes_happy'],
 #pet[data-eyes='x'] [data-role='eyes_x'],
+#pet[data-eyes='petted'] [data-role='eyes_petted'],
 #pet[data-mouth='closed'] [data-role='mouth_closed'],
 #pet[data-mouth='open'] [data-role='mouth_open'],
 #pet[data-mouth='sleep'] [data-role='mouth_sleep'] {

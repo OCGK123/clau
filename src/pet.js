@@ -26,7 +26,7 @@ const HINT = '안녕, 나 클로야! 뭐든 물어봐.'
 const HEART = '<svg viewBox="0 0 20 18"><path d="M10 16.6C4.2 12.3 1.2 9.5 1.2 6a4.5 4.5 0 0 1 8.8-1.4A4.5 4.5 0 0 1 18.8 6c0 3.5-3 6.3-8.8 10.6z"/></svg>'
 
 // 그리는 순서: 작은 친구 → 몸 → 눈 → 입 → 앞머리
-const BODY_ROLES = ['base', 'eyes_open', 'eyes_closed', 'eyes_happy', 'eyes_x', 'mouth_closed', 'mouth_open', 'mouth_sleep', 'hair']
+const BODY_ROLES = ['base', 'eyes_open', 'eyes_closed', 'eyes_happy', 'eyes_x', 'eyes_petted', 'mouth_closed', 'mouth_open', 'mouth_sleep', 'hair']
 
 let cfg
 let layers
@@ -49,7 +49,8 @@ function viewRect() {
 
 function build() {
   const make = (role, parent, cls) => {
-    if (!layers.layers[role]) return
+    const layerRole = role === 'eyes_petted' ? 'eyes_x' : role
+    if (!layers.layers[layerRole]) return
     if (role === 'eyes_x') {
       // The old bitmap contained one X across the whole face. Draw one clean
       // cross per eye, aligned with the existing open-eye layer instead.
@@ -66,7 +67,7 @@ function build() {
     const img = document.createElement('img')
     img.dataset.role = role
     img.className = cls
-    img.src = `../assets/${role}.png`
+    img.src = `../assets/${layerRole}.png`
     img.draggable = false
     parent.appendChild(img)
     imgs[role] = img
@@ -107,7 +108,7 @@ function layout() {
     node.style.height = `${h * s}px`
   }
   for (const role of BODY_ROLES) {
-    if (imgs[role]) put(imgs[role], role === 'eyes_x' ? (layers.layers.eyes_open || layers.layers[role]) : layers.layers[role])
+    if (imgs[role]) put(imgs[role], role === 'eyes_x' ? (layers.layers.eyes_open || layers.layers[role]) : layers.layers[role === 'eyes_petted' ? 'eyes_x' : role])
   }
   // 작은 친구는 둥실거리는 상자째로 자리를 잡는다.
   if (layers.layers.buddy) put(buddyEl, layers.layers.buddy)
@@ -165,7 +166,7 @@ function onHead(e) {
 }
 
 // ── 눈·입 애니메이션 ───────────────────────────────────────────────────
-const EYE_ROLE = { open: 'eyes_open', closed: 'eyes_closed', happy: 'eyes_happy', x: 'eyes_x' }
+const EYE_ROLE = { open: 'eyes_open', closed: 'eyes_closed', happy: 'eyes_happy', x: 'eyes_x', petted: 'eyes_petted' }
 let blinkTimer = null
 let flapTimer = null
 
@@ -187,7 +188,7 @@ function applyFace() {
   if (!cfg || !layers) return
   clearTimeout(blinkTimer)
   clearTimeout(flapTimer)
-  const eyes = { held: 'x', thinking: 'closed', sleeping: 'closed', dozing: 'closed', happy: 'happy', pleased: 'happy', oops: 'x', petted: 'x' }[mode] ?? 'open'
+  const eyes = { held: 'x', thinking: 'closed', sleeping: 'closed', dozing: 'closed', happy: 'happy', pleased: 'happy', oops: 'x', petted: 'petted' }[mode] ?? 'open'
   const mouth = { sleeping: 'sleep', oops: 'sleep' }[mode] ?? 'closed'
   const changed = petEl.dataset.eyes !== eyes
   petEl.dataset.eyes = eyes
@@ -378,7 +379,7 @@ function pat() {
   startPetting()
   sound.pat(pats)
   boing(0.055 + 0.05 * (Math.min(pats, 8) / 8))
-  play(imgs.eyes_x, [{ transform: 'scale(1.1, 0.72)' }, { transform: 'scale(0.96, 1.1)', offset: 0.5 }, { transform: 'scale(1, 1)' }], 260)
+  play(imgs.eyes_petted, [{ transform: 'scale(1.1, 0.72)' }, { transform: 'scale(0.96, 1.1)', offset: 0.5 }, { transform: 'scale(1, 1)' }], 260)
   heart()
 }
 
