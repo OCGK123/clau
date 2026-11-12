@@ -63,8 +63,58 @@ function rejected(err) {
   return { done: Promise.reject(err), cancel() {} }
 }
 
+function cliError(code, message, details = {}) {
+  return Object.assign(new Error(message), { code }, details)
+}
+
+function isCancellation(err) {
+  return err?.name === 'AbortError' || ['CANCELLED', 'ABORT_ERR', 'ERR_ABORTED'].includes(err?.code)
+}
+
+function resetTime(info, now = Date.now()) {
+  if (!info || typeof info !== 'object') return null
+  const raw = info.resetAt ?? info.resetsAt ?? info.reset_at ?? info.resets_at ?? info.reset_time
+  let parsed = null
+  if (raw != null && String(raw).trim()) {
+    const number = Number(raw)
+    parsed = Number.isFinite(number) ? (number < 1e12 ? number * 1000 : number) : Date.parse(String(raw))
+  } else if (info.retry_after != null || info.retryAfter != null) {
+    const delay = Number(info.retry_after ?? info.retryAfter)
+    if (Number.isFinite(delay) && delay > 0) parsed = now + delay * 1000
+  }
+  return Number.isFinite(parsed) && parsed > now ? parsed : null
+}
+
+function isRejectedRateLimit(info) {
+  return ['rejected', 'denied', 'exceeded'].includes(String(info?.status || info?.limit_status || '').toLowerCase())
+}
+
+/** Classify failures, never successful answer text or the user's question. */
+function infrastructureFailure(err, now = Date.now()) {
+  if (!err || isCancellation(err)) return null
+  const code = String(err.code || err.type || '').toUpperCase()
+  const status = Number(err.status ?? err.statusCode)
+  const text = String(err.message || err).toLowerCase()
+  let kind = null
+  if (/RATE.?LIMIT|QUOTA|USAGE_LIMIT|CREDIT_BALANCE/.test(code) || status === 429 || /rate.?limit|usage limit|quota (?:exceeded|exhausted)|hit (?:your|the) limit|credit balance.*(?:low|exhausted|insufficient)|사용 (?:한도|제한)|사용량.*(?:초과|한도)/.test(text)) kind = 'quota'
+  else if (/AUTH|UNAUTHORIZED|NOT_LOGGED_IN|INVALID_API_KEY/.test(code) || status === 401 || /not logged in|please log[ -]?in|authentication (?:failed|required|error)|unauthorized|invalid api key|(?:no|missing) api key|api key (?:not found|missing|is required)|login required|please run.*login|oauth.*(?:expired|invalid)|로그인.*(?:필요|실패)/.test(text)) kind = 'auth'
+  else if (['NO_CLAUDE', 'ENOENT', 'EACCES', 'EPERM', 'ENOEXEC'].includes(code)) kind = 'cli'
+  else if (['CLI_TIMEOUT', 'ETIMEDOUT', 'ESOCKETTIMEDOUT'].includes(code) || /(?:request|connection|response|operation) timed? ?out|timeout|timed out/.test(text)) kind = 'timeout'
+  else if (['EAGAIN', 'ENOMEM', 'EMFILE', 'ENFILE', 'ENOSPC', 'CLI_OUTPUT_LIMIT'].includes(code) || /out of memory|resource (?:exhausted|unavailable)|too many open files|cannot allocate memory/.test(text)) kind = 'resource'
+  else if (['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE'].includes(code) || /network (?:error|unavailable)|connection (?:failed|reset|refused)|fetch failed|unable to connect|could not connect/.test(text)) kind = 'network'
+  else if (/OVERLOADED|SERVICE_UNAVAILABLE|API_ERROR|CLI_EXIT|CLI_EMPTY/.test(code) || [500, 502, 503, 504, 529].includes(status) || /(?:service|server|api) (?:unavailable|error)|overloaded|temporarily unavailable|internal server error/.test(text)) kind = 'service'
+  if (!kind) return null
+  const reasons = {
+    quota: 'Claude Code 사용 한도에 도달했어요.', auth: 'Claude Code 로그인을 확인해야 해요.',
+    cli: 'Claude Code 실행 파일을 사용할 수 없어요.', timeout: 'Claude Code의 응답 시간이 초과됐어요.',
+    resource: 'Claude Code를 실행할 자원이 부족해요.', network: 'Claude Code에 연결할 수 없어요.',
+    service: 'Claude Code가 일시적으로 응답하지 않아요.',
+  }
+  return { kind, reason: reasons[kind], resetAt: resetTime(err, now) || resetTime(err.rateLimitInfo, now) }
+}
+
 /** Bounded JSONL reader, cancellation, timeout and process-error handling shared by both providers. */
-function runJsonLines({ bin, name, args, cwd, prompt, onMessage, finish, cleanup, timeoutMs = 180_000 }, deps = {}) {
+function runJsonLines({ bin, name, args, cwd, prompt, onMessage, finish, failure, cleanup, timeoutMs = 180_000 }, deps = {}) {
   let command, child
   try {
     command = commandFor(bin, name, deps)
@@ -113,7 +163,7 @@ function runJsonLines({ bin, name, args, cwd, prompt, onMessage, finish, cleanup
     if (settled) return
     buffer += chunk
     if (buffer.length > 1_048_576) {
-      settle(new Error(`${name}의 응답이 너무 커서 중지했어요.`))
+      settle(cliError('CLI_OUTPUT_LIMIT', `${name}의 응답이 너무 커서 중지했어요.`))
       kill()
       return
     }
@@ -135,7 +185,9 @@ function runJsonLines({ bin, name, args, cwd, prompt, onMessage, finish, cleanup
     ended = true
     handle(buffer.trim())
     try {
-      if (code !== 0) throw new Error(errOut.trim() || `${name}가 대답을 끝내지 못했어요 (종료 ${code ?? signal}).`)
+      const structured = failure?.()
+      if (structured) throw structured
+      if (code !== 0) throw cliError('CLI_EXIT', errOut.trim() || `${name}가 대답을 끝내지 못했어요 (종료 ${code ?? signal}).`, { exitCode: code, signal })
       settle(null, finish())
     } catch (err) { settle(err) }
     dispose()
@@ -143,7 +195,7 @@ function runJsonLines({ bin, name, args, cwd, prompt, onMessage, finish, cleanup
   child.stdin.on('error', () => { /* EPIPE is reported by exit/error above. */ })
   child.stdin.end(prompt)
   timer = setTimeout(() => {
-    settle(new Error(`${name}의 응답 시간이 길어 중지했어요. 로그인과 연결 상태를 확인한 뒤 다시 물어봐 주세요.`))
+    settle(cliError('CLI_TIMEOUT', `${name}의 응답 시간이 길어 중지했어요. 로그인과 연결 상태를 확인한 뒤 다시 물어봐 주세요.`))
     kill()
   }, timeoutMs)
   timer.unref?.()
@@ -159,4 +211,4 @@ function runJsonLines({ bin, name, args, cwd, prompt, onMessage, finish, cleanup
   }
 }
 
-module.exports = { findExecutable, commandFor, runJsonLines, rejected }
+module.exports = { findExecutable, commandFor, runJsonLines, rejected, cliError, isCancellation, resetTime, isRejectedRateLimit, infrastructureFailure }

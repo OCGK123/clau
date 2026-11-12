@@ -106,3 +106,17 @@ test('a failed disk save is surfaced while current-session settings remain usabl
   store.set({ chatProvider: 'codex' })
   assert.equal(store.getSaveError(), null)
 })
+
+test('0.5.0 preserves custom sound metadata and fallback preferences but strips raw API keys', t => {
+  const dir = isolated(t)
+  store.init(dir)
+  const meta = {id:'a'.repeat(64)+'.wav',name:'내 효과음.wav',path:'/private/unused'}
+  store.set({pettingSound:'custom',pettingSoundFile:meta,claudeFallbackToCodex:true,groqFallbackEnabled:true,groqModel:'openai/gpt-oss-120b',groqApiKey:'never-save-this'})
+  const cfg=store.init(dir)
+  assert.equal(cfg.pettingSound,'custom')
+  assert.deepEqual(cfg.pettingSoundFile,{id:meta.id,name:meta.name})
+  assert.equal(cfg.claudeFallbackToCodex,true)
+  assert.equal(cfg.groqFallbackEnabled,true)
+  assert.ok(!fs.readFileSync(path.join(dir,'settings.json'),'utf8').includes('never-save-this'))
+  assert.equal(store.set({pettingSoundFile:{id:'../stolen.wav',name:'bad'}}).pettingSoundFile,null)
+})

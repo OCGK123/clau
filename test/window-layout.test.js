@@ -109,18 +109,17 @@ test('large pet and a narrow work area keep stage size and produce finite geomet
 
 test('holding adds exact transparent rotation room while preserving the pickup position', () => {
   const oddPet = { width: 181, height: 223 }
-  const side = 63 // ceil(223 * .28)
-  const top = 27 // ceil(223 * .12)
+  const radius = Math.ceil(Math.hypot(oddPet.width, oddPet.height))
   for (const position of [{ x: 0, y: 0 }, { x: 1739, y: 857 }, { x: 500, y: 300 }]) {
     const held = layout({ position, pet: oddPet, bubble, area, dragging: true })
     const released = layout({ position: held.position, pet: oddPet, bubble, area })
     assert.deepEqual(stagePoint(held), position)
     assert.deepEqual(stagePoint(released), position)
-    assert.deepEqual(held.bounds, { x: position.x - side, y: position.y - top, width: oddPet.width + side * 2, height: oddPet.height + top })
-    assert.equal(held.stage.left, side)
-    assert.equal(held.stage.top, top)
+    assert.deepEqual(held.bounds, { x: position.x - radius, y: position.y - radius, width: oddPet.width + radius * 2, height: oddPet.height + radius * 2 })
+    assert.equal(held.stage.left, radius)
+    assert.equal(held.stage.top, radius)
     assert.equal(held.stage.anchorX, 0.5)
-    assert.equal(held.stage.anchorY, 1)
+    assert.equal(held.stage.anchorY, 0.5)
     assert.equal(released.bounds.width, oddPet.width)
     assert.equal(released.bounds.height, oddPet.height)
   }
@@ -157,4 +156,33 @@ test('retaining a previous full stage object never overwrites new stage size or 
   assert.equal(next.stage.left, 0)
   assert.equal(next.stage.top, 0)
   assert.deepEqual(stagePoint(next), { x: 500, y: 400 })
+})
+
+
+test('full rotations at every pickup corner fit both full and bust artwork, including flipping', () => {
+  for (const view of ['full', 'bust']) {
+    const height = 220
+    const width = view === 'bust' ? 266 : 184
+    const art = { width, height, artWidth: width * 0.94, artHeight: height * 0.94 / (view === 'bust' ? 0.69 : 1), artTop: height * 0.06 }
+    const position = { x: 0, y: 0 }
+    const held = layout({ position, pet: art, bubble, area, dragging: true })
+    assert.deepEqual(stagePoint(held), position)
+    assert.equal(held.stage.anchorX, 0.5)
+    assert.equal(held.stage.anchorY, 0.5)
+    assert.ok(held.bounds.x < area.x && held.bounds.y < area.y, 'native gutters stay outside the work area instead of shifting the stage')
+    const left = (width - art.artWidth) / 2
+    for (const flip of [false, true]) for (const pivot of [{x:0,y:0},{x:width,y:0},{x:0,y:height},{x:width,y:height},{x:width/2,y:height/2}]) {
+      for (let degrees = -720; degrees <= 720; degrees += 15) {
+        const radians = degrees * Math.PI / 180
+        for (const corner of [{x:left,y:art.artTop},{x:left+art.artWidth,y:art.artTop},{x:left,y:art.artTop+art.artHeight},{x:left+art.artWidth,y:art.artTop+art.artHeight}]) {
+          const localX = (flip ? width - corner.x : corner.x) - pivot.x
+          const localY = corner.y - pivot.y
+          const x = position.x + pivot.x + localX * Math.cos(radians) - localY * Math.sin(radians)
+          const y = position.y + pivot.y + localX * Math.sin(radians) + localY * Math.cos(radians)
+          assert.ok(x >= held.bounds.x && x <= held.bounds.x + held.bounds.width, `${view} X fits at ${degrees} degrees`)
+          assert.ok(y >= held.bounds.y && y <= held.bounds.y + held.bounds.height, `${view} Y fits at ${degrees} degrees`)
+        }
+      }
+    }
+  }
 })

@@ -7,7 +7,8 @@ let info = null
 let appsInfo = null
 let loadingApps = false
 let saveQueue = Promise.resolve()
-const previewSound = PetSound.create()
+let choosingSound = false
+const previewSound = PetSound.create({ onError: ({ kind, message }) => setStatus(el(`${kind}FileStatus`), message, 'bad') })
 
 // ── 탭 ─────────────────────────────────────────────────────────────────
 function showTab(name) {
@@ -85,6 +86,15 @@ function render() {
   for (const id of ['soundVolume', 'pettingSound', 'talkingSound']) el(id).disabled = !cfg.soundEnabled
   el('previewPetting').disabled = !cfg.soundEnabled || !cfg.soundVolume || cfg.pettingSound === 'none'
   el('previewTalking').disabled = !cfg.soundEnabled || !cfg.soundVolume || cfg.talkingSound === 'none'
+  for (const kind of ['petting', 'talking']) {
+    el(`${kind}FileName`).textContent = cfg[`${kind}SoundFile`]?.name || '아직 고른 파일이 없어요.'
+    el(`choose${kind === 'petting' ? 'Petting' : 'Talking'}Sound`).disabled = choosingSound
+  }
+  el('claudeFallbackToCodex').disabled = !cfg.chatEnabled
+  el('groqFallbackEnabled').disabled = !cfg.chatEnabled
+  const keyInfo = info.groqCredential || {}
+  el('clearGroqKey').disabled = !keyInfo.configured
+  setStatus(el('groqKeyStatus'), keyInfo.error || (keyInfo.configured ? keyInfo.persistent ? '키가 저장되어 있어요. 운영체제 보안 저장소로 암호화해 보관해요.' : '키를 이번 실행 동안만 보관해요. 보안 저장소가 준비되면 다음에 암호화해 저장할 수 있어요.' : 'Groq API 키를 입력하고 저장해 주세요. 키는 대화나 GitHub에 포함되지 않아요.'), keyInfo.error ? 'bad' : keyInfo.configured ? 'ok' : '')
 
   // 반응
   if (!cfg.followClaudeCode) setStatus(el('modStatus'), '')
@@ -109,7 +119,24 @@ function render() {
   const provider = cfg.chatProvider === 'codex' ? 'Codex' : 'Claude Code'
   const found = cfg.chatProvider === 'codex' ? info.codexFound : claudeFound
   setStatus(el('providerStatus'), !cfg.chatEnabled ? '대화가 꺼져 있어요. 쓰다듬기와 자리 옮기기는 따로 설정할 수 있어요.' : found ? `${provider}로 대화해요. 해당 CLI에 로그인되어 있어야 해요.` : `${provider} 실행 파일을 찾지 못했어요. 실행 탭에서 연결을 확인해 주세요.`, cfg.chatEnabled && !found ? 'bad' : '')
+  if ((cfg.claudeFallbackToCodex || cfg.groqFallbackEnabled) && cfg.chatProvider === 'claude') {
+    const groqReady = cfg.groqFallbackEnabled && keyInfo.configured
+    setStatus(el('fallbackStatus'), cfg.groqFallbackEnabled ? groqReady ? 'Claude → Codex → Groq 순서로 시도해요. 사용할 수 없는 서비스는 건너뛰어요.' : 'Claude → Codex → Groq 순서예요. 아래에서 Groq API 키를 저장해 주세요.' : info.codexFound ? 'Claude를 쓸 수 없을 때 Codex로 자동 전환해요. Codex에도 로그인해 두세요.' : '자동 전환하려면 실행 탭에서 Codex CLI를 연결하고 로그인해 주세요.', groqReady || info.codexFound ? '' : 'bad')
+    if (!claudeFound && info.codexFound && cfg.chatEnabled) setStatus(el('providerStatus'), 'Claude Code를 찾지 못하면 Codex로 대화해요.')
+  } else setStatus(el('fallbackStatus'), '')
 }
+
+function saveGroqKey(clear = false) {
+  const value = clear ? null : el('groqKey').value
+  el('groqKey').value = ''
+  saveQueue = saveQueue.then(async () => {
+    try { info = await window.pet.setGroqKey(value); render() }
+    catch { setStatus(el('groqKeyStatus'), '키를 저장하지 못했어요. 올바른 키인지 확인하고 다시 입력해 주세요.', 'bad') }
+  })
+  return saveQueue
+}
+el('saveGroqKey').addEventListener('click', () => saveGroqKey())
+el('clearGroqKey').addEventListener('click', () => saveGroqKey(true))
 
 function apply(patch) {
   setStatus(el('saveStatus'), '저장 중…')
@@ -153,9 +180,49 @@ el('targetAppSelect').addEventListener('change', () => {
   const app = appsInfo?.apps.find(app => appKey(app) === el('targetAppSelect').value)
   if (app) apply({ targetAppSelection: { kind: app.kind, id: app.id, label: app.label } })
 })
-el('previewPetting').addEventListener('click', () => { previewSound.unlock(); previewSound.pat() })
-el('previewTalking').addEventListener('click', () => { previewSound.unlock(); previewSound.talk() })
+async function playPreview(kind) {
+  previewSound.unlock()
+  await saveQueue
+  try {
+    previewSound.configure(info.cfg)
+    await previewSound.prepare(kind)
+    if (kind === 'petting') previewSound.pat()
+    else previewSound.talk()
+    setStatus(el(`${kind}FileStatus`), info.cfg[`${kind}Sound`] === 'custom' ? '선택한 파일을 재생해요.' : '기본 효과음을 재생해요.')
+  } catch (error) { setStatus(el(`${kind}FileStatus`), `이 소리를 재생하지 못했어요: ${error.message || error}`, 'bad') }
+}
+function chooseSound(kind) {
+  if (choosingSound) return saveQueue
+  choosingSound = true
+  render()
+  saveQueue = saveQueue.then(async () => {
+    const previous = { [`${kind}Sound`]: info.cfg[`${kind}Sound`], [`${kind}SoundFile`]: info.cfg[`${kind}SoundFile`] }
+    try {
+      const result = await window.pet.chooseSound(kind)
+      info = result.info
+      render()
+      if (result.cancelled) return
+      if (result.error) throw new Error(result.error)
+      previewSound.configure(info.cfg)
+      try { await previewSound.prepare(kind) }
+      catch (error) {
+        info = await window.pet.setSettings(previous)
+        render()
+        throw new Error(`이 파일을 해석하지 못했어요. 다른 파일을 골라 주세요. ${error.message || error}`)
+      }
+      setStatus(el(`${kind}FileStatus`), '파일을 클로에 복사해 두었어요. 원래 파일을 옮겨도 사용할 수 있어요.', 'ok')
+      setStatus(el('saveStatus'), info.saveError ? `저장 실패: ${info.saveError}` : '효과음을 저장했어요.', info.saveError ? 'bad' : 'ok')
+    } catch (error) { setStatus(el(`${kind}FileStatus`), String(error.message || error), 'bad') }
+    finally { choosingSound = false; render() }
+  })
+  return saveQueue
+}
+el('previewPetting').addEventListener('click', () => playPreview('petting'))
+el('previewTalking').addEventListener('click', () => playPreview('talking'))
+el('choosePettingSound').addEventListener('click', () => chooseSound('petting'))
+el('chooseTalkingSound').addEventListener('click', () => chooseSound('talking'))
 window.addEventListener('beforeunload', () => previewSound.dispose())
+window.pet.onSoundError?.(({kind, message}) => setStatus(el(`${kind}FileStatus`), message, 'bad'))
 
 // ── 이벤트 ─────────────────────────────────────────────────────────────
 for (const node of fields) {
@@ -180,7 +247,10 @@ for (const node of fields) {
     })
     node.addEventListener('blur', commit)
   } else {
-    node.addEventListener('change', () => apply({ [key]: read(node) }))
+    node.addEventListener('change', () => {
+      if (['pettingSound', 'talkingSound'].includes(key) && read(node) === 'custom' && !info.cfg[`${key}File`]) return chooseSound(key === 'pettingSound' ? 'petting' : 'talking')
+      apply({ [key]: read(node) })
+    })
   }
 }
 

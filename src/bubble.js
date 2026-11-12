@@ -25,6 +25,15 @@ let pendingText = null
 let autoTimer = null
 let lastTouch = Date.now()
 let limitUntil = 0
+let providerState = null
+
+function showProvider(state) {
+  providerState = state
+  const label = el('providerName')
+  if (label) label.textContent = `${{claude:'Claude Code',codex:'Codex',groq:'Groq'}[state.provider] || '클로'}${state.fallback ? ' · 자동 전환' : '와 대화'}`
+  if (state.fallback) limitUntil = 0
+}
+window.pet.onChatProvider?.(showProvider)
 
 function paint() {
   shellPath.setAttribute('d', window.BubbleShape.path(window.BubbleShape.points(progress, layout)))
@@ -130,7 +139,7 @@ form.addEventListener('submit', event => {
   event.preventDefault()
   const question = input.value.trim()
   if (!question || busy || cfg.chatEnabled === false || event.isComposing) return
-  if (Date.now() < limitUntil) {
+  if (Date.now() < limitUntil && !cfg.claudeFallbackToCodex && !cfg.groqFallbackEnabled) {
     const time = new Date(limitUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     showText(`zzz… 사용 제한에 걸려서 ${time}까지 쉬는 중이야.`)
     return
@@ -190,6 +199,8 @@ window.pet.onCleared(() => {
   touch()
 })
 function configure(next) {
+  if (next.claudeFallbackToCodex || next.groqFallbackEnabled) limitUntil = 0
+  if (!providerState || cfg.chatProvider !== next.chatProvider) showProvider({provider:next.chatProvider || 'claude'})
   cfg = next
   document.body.classList.toggle('reduce-motion', cfg.reduceMotion)
   if (cfg.reduceMotion && morph) finishMorph(open ? 1 : 0)

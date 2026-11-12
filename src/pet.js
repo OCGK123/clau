@@ -51,19 +51,6 @@ function build() {
   const make = (role, parent, cls) => {
     const layerRole = role === 'eyes_petted' ? 'eyes_x' : role
     if (!layers.layers[layerRole]) return
-    if (role === 'eyes_x') {
-      // The old bitmap contained one X across the whole face. Draw one clean
-      // cross per eye, aligned with the existing open-eye layer instead.
-      const eyes = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-      eyes.dataset.role = role
-      eyes.setAttribute('class', cls)
-      eyes.setAttribute('viewBox', '0 0 306 110')
-      eyes.setAttribute('aria-hidden', 'true')
-      eyes.innerHTML = '<g fill="none" stroke="#3c1c0d" stroke-width="12" stroke-linecap="round"><path d="M58 43 102 87 M102 43 58 87"/><path d="M204 43 248 87 M248 43 204 87"/></g>'
-      parent.appendChild(eyes)
-      imgs[role] = eyes
-      return
-    }
     const img = document.createElement('img')
     img.dataset.role = role
     img.className = cls
@@ -108,7 +95,7 @@ function layout() {
     node.style.height = `${h * s}px`
   }
   for (const role of BODY_ROLES) {
-    if (imgs[role]) put(imgs[role], role === 'eyes_x' ? (layers.layers.eyes_open || layers.layers[role]) : layers.layers[role === 'eyes_petted' ? 'eyes_x' : role])
+    if (imgs[role]) put(imgs[role], layers.layers[role === 'eyes_petted' ? 'eyes_x' : role])
   }
   // 작은 친구는 둥실거리는 상자째로 자리를 잡는다.
   if (layers.layers.buddy) put(buddyEl, layers.layers.buddy)
@@ -476,16 +463,18 @@ form.addEventListener('submit', e => {
   window.pet.ask(text)
 })
 
-function finish() {
+function finish(stopAll = false) {
   busy = false
   sendBtn.disabled = false
   cancelBtn.hidden = true
-  sound.stop()
+  if (stopAll) sound.stop()
+  else sound.stopSynth?.()
   touch()
 }
 
 window.pet.onDelta(whole => {
   if (!busy) return
+  if (!whole) { speechStartedAt = null; setLocal('thinking'); return }
   if (local !== 'talking') {
     speechStartedAt = performance.now()
     setLocal('talking')
@@ -506,7 +495,7 @@ window.pet.onDone(text => {
 })
 window.pet.onError(message => {
   if (!busy) return
-  finish()
+  finish(true)
   if (Date.now() < limitUntil) {
     showAnswer(`zzz… 사용 제한에 걸렸어. ${limitTime()}에 다시 일어날게.`)
     setLocal(null)
@@ -515,20 +504,27 @@ window.pet.onError(message => {
     setLocal('oops', OOPS_MS)
   }
 })
+window.pet.onChatProvider?.(info => {
+  const provider = typeof info === 'string' ? info : info?.provider
+  if (provider !== 'codex' && provider !== 'groq') return
+  limitUntil = 0
+  if (busy && info?.fallback) { speechStartedAt = null; setLocal('thinking') }
+  else recompute()
+})
 window.pet.onRateLimit(info => {
   // 거절된 창이 있으면 그 리셋 시각까지 잔다(초 단위 epoch).
   if (info && info.status === 'rejected' && Number(info.resetsAt) > 0) limitUntil = Number(info.resetsAt) * 1000
   recompute()
 })
 window.pet.onCleared(() => {
-  finish()
+  finish(true)
   limitUntil = 0
   setLocal(null)
   showHint()
 })
 cancelBtn.addEventListener('click', () => {
   window.pet.cancel()
-  finish()
+  finish(true)
   setLocal(null)
   showAnswer('잠깐 쉬었다가 다시 이야기하자.')
 })
@@ -701,7 +697,7 @@ window.pet.onChatStarted?.(() => {
   setLocal('thinking')
 })
 window.pet.onChatCancelled?.(() => {
-  finish()
+  finish(true)
   setLocal(null)
 })
 window.pet.onVisibility?.(value => {
@@ -736,8 +732,11 @@ function syncVisibility() {
 }
 
 window.pet.onCfg(next => {
+  const before = cfg
   cfg = next
+  if ((cfg.claudeFallbackToCodex && !before?.claudeFallbackToCodex) || (cfg.groqFallbackEnabled && !before?.groqFallbackEnabled) || (before && cfg.chatProvider !== before.chatProvider)) limitUntil = 0
   sound.configure(cfg)
+  if (before && ['chatProvider', 'claudeFallbackToCodex', 'groqFallbackEnabled'].some(key => before[key] !== cfg[key])) sound.stop()
   if (down && (cfg.locked || cfg.dragEnabled === false || (down.head && !cfg.petting))) release({ type: 'settings' })
   if (cfg.reduceMotion || cfg.dragPhysics === false) stopHeldMotion()
   if (cfg.chatEnabled === false) closeBubble(true)

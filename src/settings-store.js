@@ -25,6 +25,9 @@ const DEFAULTS = {
   // 대화
   chatEnabled: true,
   chatProvider: 'claude',
+  claudeFallbackToCodex: false,
+  groqFallbackEnabled: false,
+  groqModel: 'openai/gpt-oss-120b',
   codexModel: '', // 비우면 Codex CLI 기본 모델
   model: 'claude-haiku-5-5',
   persona: DEFAULT_PERSONA,
@@ -60,6 +63,8 @@ const DEFAULTS = {
   soundVolume: 35,
   pettingSound: 'chime',
   talkingSound: 'soft',
+  pettingSoundFile: null,
+  talkingSoundFile: null,
   dozeMinutes: 3, // 이만큼 조용하면 졸기. 0이면 졸지 않음
   reduceMotion: false, // 움직임 줄이기
 
@@ -89,6 +94,8 @@ function normalize(raw) {
   const next = { ...DEFAULTS, ...raw }
   next.chatProvider = pick(next.chatProvider, ['claude', 'codex'], DEFAULTS.chatProvider)
   next.codexModel = typeof next.codexModel === 'string' ? next.codexModel.trim().slice(0, 200) : ''
+  next.groqModel = typeof next.groqModel === 'string' && next.groqModel.trim() ? next.groqModel.trim().slice(0, 200) : DEFAULTS.groqModel
+  delete next.groqApiKey
   if (typeof next.model !== 'string' || !next.model.trim()) next.model = DEFAULTS.model
   if (typeof next.persona !== 'string' || !next.persona.trim()) next.persona = DEFAULT_PERSONA
   next.historyTurns = clampInt(next.historyTurns, 0, 30, DEFAULTS.historyTurns)
@@ -106,8 +113,15 @@ function normalize(raw) {
   }
   next.dozeMinutes = clampInt(next.dozeMinutes, 0, 120, DEFAULTS.dozeMinutes)
   next.soundVolume = clampInt(next.soundVolume, 0, 100, DEFAULTS.soundVolume)
-  next.pettingSound = pick(next.pettingSound, ['none', 'chime', 'pop'], DEFAULTS.pettingSound)
-  next.talkingSound = pick(next.talkingSound, ['none', 'soft', 'type'], DEFAULTS.talkingSound)
+  next.pettingSound = pick(next.pettingSound, ['none', 'chime', 'pop', 'custom'], DEFAULTS.pettingSound)
+  next.talkingSound = pick(next.talkingSound, ['none', 'soft', 'type', 'custom'], DEFAULTS.talkingSound)
+  for (const kind of ['petting', 'talking']) {
+    const meta = next[`${kind}SoundFile`]
+    next[`${kind}SoundFile`] = meta && typeof meta === 'object' && typeof meta.id === 'string'
+      && /^[a-f0-9]{64}\.(wav|mp3|ogg|m4a|flac|webm)$/.test(meta.id)
+      ? { id: meta.id, name: typeof meta.name === 'string' ? meta.name.replace(/[\x00-\x1f]/g, '').slice(0, 200) : meta.id }
+      : null
+  }
   next.targetApp = (typeof next.targetApp === 'string' && next.targetApp.trim().toLowerCase()) || DEFAULTS.targetApp
   if (typeof next.claudePath !== 'string') next.claudePath = ''
   if (typeof next.codexPath !== 'string') next.codexPath = ''

@@ -115,4 +115,13 @@ test('the first gesture survives asynchronous audio unlock, and stopping cancels
   resolveResume()
   await Promise.resolve()
   assert.equal(voices, 1)
+
+  const third = create({ AudioContext: SuspendedContext })
+  third.configure(cfg)
+  third.unlock()
+  third.talk()
+  third.stopSynth()
+  resolveResume()
+  await Promise.resolve()
+  assert.equal(voices, 1)
 })

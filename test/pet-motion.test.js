@@ -26,10 +26,18 @@ test('stronger horizontal motion produces a larger swing in the expected directi
   assert.equal(Math.sign(swing(-12)[0]), -1)
 })
 
-test('sway damps after stopping and large movements stay bounded', () => {
-  const samples = swing(20000)
-  assert.ok(Math.max(...samples.map(Math.abs)) <= 0.42 * 180 / Math.PI + 0.0001)
-  assert.ok(Math.abs(samples.at(-1)) < 0.001)
+test('strong motion can pass 24 degrees, 90 degrees, and multiple full turns without a ceiling', () => {
+  const moderate = swing(50)
+  const strong = swing(200)
+  const spin = swing(1200)
+  assert.ok(Math.max(...moderate.map(Math.abs)) > 24)
+  assert.ok(Math.max(...strong.map(Math.abs)) > 90)
+  assert.ok(Math.max(...spin.map(Math.abs)) > 720)
+  assert.ok(Math.abs(spin.at(-1)) < 0.01)
+  assert.ok(spin.every(Number.isFinite))
+})
+
+test('damped motion sleeps after settling and wakes on new hand input', () => {
   const motion = create()
   motion.begin(0, 0)
   motion.move(12, 16)
@@ -38,6 +46,40 @@ test('sway damps after stopping and large movements stay bounded', () => {
   assert.equal(motion.isSettled(), true)
   motion.move(24, 10016)
   assert.equal(motion.isSettled(), false)
+})
+
+test('repeated vigorous input settles at the nearest full revolution without erasing accumulated turns', () => {
+  const motion = create()
+  let random = 60
+  let x = 0
+  const next = () => { random = (random * 1664525 + 1013904223) >>> 0; return random / 4294967296 }
+  motion.begin(0, 0)
+  let angle = 0
+  let peak = 0
+  for (let at = 16; at <= 1600; at += 16) {
+    if (next() > 0.3) { x += (next() - 0.5) * 2000; motion.move(x, at) }
+    angle = motion.step(at)
+    peak = Math.max(peak, Math.abs(angle))
+    assert.ok(Number.isFinite(angle))
+  }
+  for (let at = 1616; at <= 20000; at += 16) angle = motion.step(at)
+  assert.ok(peak > 360)
+  assert.ok(Math.abs(angle + 360) < 0.0001)
+  assert.equal(motion.isSettled(), true)
+  assert.equal(motion.step(30000), angle)
+})
+
+test('extreme pointer samples, frame gaps and backwards frames stay finite', () => {
+  const motion = create({ length: NaN })
+  motion.begin(0, 0)
+  motion.move(Number.MAX_VALUE, 1)
+  const first = motion.step(16)
+  assert.ok(Number.isFinite(first))
+  assert.equal(motion.step(8), first)
+  motion.move(-Number.MAX_VALUE, 32)
+  assert.ok(Number.isFinite(motion.step(1e9)))
+  for (let at = 1e9 + 16; at < 1e9 + 20000; at += 16) assert.ok(Number.isFinite(motion.step(at)))
+  assert.equal(motion.isSettled(), true)
 })
 
 test('release clears the spring and invalid or duplicate timestamps cannot inject motion', () => {

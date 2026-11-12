@@ -13,8 +13,10 @@ async function renderer() {
   const callbacks = {}
   const expansions = []
   const audioVisibility = []
+  const audioStops = []
   class Element {
-    constructor() {
+    constructor(tagName = 'div') {
+      this.tagName = tagName.toUpperCase()
       this.dataset = {}
       this.style = { setProperty(key, value) { this[key] = value }, removeProperty(key) { delete this[key] } }
       this.children = []
@@ -36,7 +38,7 @@ async function renderer() {
     addEventListener(key, fn) { this.listeners[key] = fn }
     querySelectorAll() { return [] }
     getAnimations() { return [] }
-    animate() { return { cancel() {} } }
+    animate(frames, options) { this.lastAnimation = { frames, options }; return { cancel() {} } }
     hasChildNodes() { return !!this.textContent || !!this.innerHTML || !!this.children.length }
     focus() {}
     getBoundingClientRect() { return { left: 0, top: 0, width: 184, height: 220 } }
@@ -46,13 +48,13 @@ async function renderer() {
   elements.pet.className = 'mode-idle'
   elements.bubble.hidden = true
   const body = new Element()
-  const document = { body, visibilityState: 'visible', getElementById: name => elements[name], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener() {}, getAnimations: () => [] }
+  const document = { body, visibilityState: 'visible', getElementById: name => elements[name], createElement: name => new Element(name), createElementNS: (_namespace, name) => new Element(name), addEventListener() {}, getAnimations: () => [] }
   const pet = {
     init: () => Promise.resolve({ cfg: { ...DEFAULTS }, layers: JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/layers.json'), 'utf8')), bust: 0.69, ccState: null, visible: true }),
     expand: value => expansions.push(value), ask() {}, cancel() {}, menu() {}, drag() {},
   }
-  for (const name of ['Cfg', 'Input', 'Hello', 'ClaudeCode', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Layout', 'Visibility', 'ChatVisibility', 'ChatStarted', 'ChatCancelled']) pet[`on${name}`] = fn => { callbacks[name] = fn }
-  const audio = { configure() {}, unlock() {}, pat() {}, talk() {}, stop() {}, dispose() {}, setVisible: value => audioVisibility.push(value) }
+  for (const name of ['Cfg', 'Input', 'Hello', 'ClaudeCode', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Layout', 'Visibility', 'ChatVisibility', 'ChatStarted', 'ChatCancelled', 'ChatProvider']) pet[`on${name}`] = fn => { callbacks[name] = fn }
+  const audio = { configure() {}, unlock() {}, pat() {}, talk() {}, stop() { audioStops.push('all') }, stopSynth() { audioStops.push('synth') }, dispose() {}, setVisible: value => audioVisibility.push(value) }
   const window = { pet, PetMotion: require('../src/pet-motion'), PetSound: { create: () => audio }, addEventListener() {} }
   class ClockDate extends Date { static now() { return now } }
   const context = vm.createContext({ window, document, Date: ClockDate, performance: { now: () => now },
@@ -76,7 +78,7 @@ async function renderer() {
   }
   function frame() { for (const [key, fn] of [...frames]) { frames.delete(key); fn(now) } }
   const geometry = { stage: { left: 78, top: 222, width: 184, height: 220, anchorX: 0.5, anchorY: 1 }, bubble: { left: 0, top: 0, width: 340, height: 210, originX: 170, originY: 210 } }
-  return { evaluate, advance, frame, callbacks, elements, timers, frames, expansions, audioVisibility, geometry }
+  return { evaluate, advance, frame, callbacks, elements, timers, frames, expansions, audioVisibility, audioStops, geometry }
 }
 
 test('idle uses only state deadlines, and hiding suspends every renderer timer and frame', async () => {
@@ -158,4 +160,82 @@ test('external chat lifecycle drives expressions without adding any pet window l
 test('a visibility signal before settings arrive cannot access an uninitialized face', async () => {
   const r = await renderer()
   assert.doesNotThrow(() => r.evaluate('cfg = undefined; layers = undefined; visible = false; syncVisibility()'))
+})
+
+
+test('held and oops expressions use the original X bitmap at its original layer geometry', async () => {
+  const r = await renderer()
+  assert.equal(r.evaluate('imgs.eyes_x.tagName'), 'IMG')
+  assert.equal(r.evaluate('imgs.eyes_x.src'), '../assets/eyes_x.png')
+  for (const mode of ['held', 'oops']) {
+    r.evaluate(`setMode('${mode}')`)
+    assert.equal(r.elements.pet.dataset.eyes, 'x')
+    assert.equal(r.evaluate('imgs[EYE_ROLE[petEl.dataset.eyes]] === imgs.eyes_x'), true)
+    assert.equal(r.evaluate('imgs.eyes_x.style.left === `${(layers.layers.eyes_x[0] - viewRect()[0]) * scale}px`'), true)
+    assert.equal(r.evaluate('imgs.eyes_x.style.top === `${(layers.layers.eyes_x[1] - viewRect()[1]) * scale}px`'), true)
+    assert.equal(r.evaluate('imgs.eyes_x.style.width === `${layers.layers.eyes_x[2] * scale}px`'), true)
+    assert.equal(r.evaluate('imgs.eyes_x.style.height === `${layers.layers.eyes_x[3] * scale}px`'), true)
+  }
+})
+
+test('petting retains the original X bitmap and its 260ms pat animation', async () => {
+  const r = await renderer()
+  r.evaluate('pat()')
+  assert.equal(r.evaluate('imgs.eyes_petted.tagName'), 'IMG')
+  assert.equal(r.evaluate('imgs.eyes_petted.src'), '../assets/eyes_x.png')
+  assert.equal(r.evaluate('imgs.eyes_petted.style.width === imgs.eyes_x.style.width && imgs.eyes_petted.style.left === imgs.eyes_x.style.left'), true)
+  assert.equal(r.evaluate('imgs.eyes_petted.lastAnimation.options.duration'), 260)
+  assert.equal(r.elements.pet.dataset.eyes, 'petted')
+})
+
+
+test('switching a limited chat to Codex or Groq clears the stale Claude rate limit', async () => {
+  for (const provider of ['codex', 'groq']) {
+    const r = await renderer()
+    r.callbacks.RateLimit({ status: 'rejected', resetsAt: 100 })
+    assert.equal(r.evaluate('mode'), 'sleeping')
+    r.callbacks.ChatProvider({ provider, fallback: true })
+    assert.equal(r.evaluate('limitUntil'), 0)
+    assert.equal(r.evaluate('mode'), 'idle')
+  }
+})
+
+test('enabling either fallback route clears a previously stored Claude cooldown', async () => {
+  for (const key of ['claudeFallbackToCodex', 'groqFallbackEnabled']) {
+    const r = await renderer()
+    r.callbacks.RateLimit({ status: 'rejected', resetsAt: 100 })
+    r.callbacks.Cfg({ ...r.evaluate('cfg'), [key]: true })
+    assert.equal(r.evaluate('limitUntil'), 0)
+    assert.equal(r.evaluate('mode'), 'idle')
+  }
+})
+
+
+test('successful chat completion keeps custom one-shots, while cancel and clear stop all voices', async () => {
+  const r = await renderer()
+  r.callbacks.ChatVisibility({ open: true })
+  r.callbacks.ChatStarted()
+  r.callbacks.Delta('응답')
+  r.callbacks.Done('응답')
+  assert.equal(r.audioStops.at(-1), 'synth')
+  r.callbacks.ChatStarted()
+  r.callbacks.ChatCancelled()
+  assert.equal(r.audioStops.at(-1), 'all')
+  r.callbacks.ChatStarted()
+  r.callbacks.Cleared()
+  assert.equal(r.audioStops.at(-1), 'all')
+})
+
+test('fallback transitions discard the old speaking beat and wait for the next provider', async () => {
+  const r = await renderer()
+  r.callbacks.ChatStarted()
+  r.callbacks.Delta('첫 서비스의 일부 응답')
+  assert.equal(r.evaluate('mode'), 'talking')
+  r.callbacks.Delta('')
+  assert.equal(r.evaluate('mode'), 'thinking')
+  assert.equal(r.evaluate('speechStartedAt'), null)
+  r.callbacks.ChatProvider({ provider: 'groq', fallback: true })
+  assert.equal(r.evaluate('mode'), 'thinking')
+  r.callbacks.Delta('새 서비스의 응답')
+  assert.equal(r.evaluate('mode'), 'talking')
 })

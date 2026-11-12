@@ -12,9 +12,14 @@ function layout({ position, pet, bubble, area, expanded = false, dragging = fals
   const open = { x: Math.min(x, bx), y: Math.min(y, by), width: Math.max(x + pet.width, bx + width) - Math.min(x, bx), height: Math.max(y + pet.height, by + height) - Math.min(y, by) }
   let bounds = expanded ? open : { x, y, width: pet.width, height: pet.height }
   if (dragging && !expanded) {
-    const side = Math.ceil(pet.height * 0.28)
-    const top = Math.ceil(pet.height * 0.12)
-    bounds = { x: x - side, y: y - top, width: pet.width + side * 2, height: pet.height + top }
+    // The grab pivot can be anywhere in the stage. Any artwork corner can
+    // rotate a full diagonal away from it; leave that radius on every side.
+    // Bust mode still rotates the full artwork behind its cropped idle view.
+    const artWidth = Number.isFinite(pet.artWidth) ? Math.max(0, pet.artWidth) : pet.width
+    const artHeight = Number.isFinite(pet.artHeight) ? Math.max(0, pet.artHeight) : pet.height
+    const artTop = Number.isFinite(pet.artTop) ? Math.max(0, pet.artTop) : Number.isFinite(pet.artHeight) ? pet.height * 0.06 : 0
+    const radius = Math.ceil(Math.hypot(Math.max(pet.width, artWidth), Math.max(pet.height, artTop + artHeight)))
+    bounds = { x: x - radius, y: y - radius, width: pet.width + radius * 2, height: pet.height + radius * 2 }
   }
   const ratio = (offset, space, fallback) => space > 0 ? offset / space : fallback
   const plannedAnchors = {

@@ -55,8 +55,7 @@ body {
 #pet.flip {
   transform: scaleX(-1);
 }
-#pet img,
-#pet svg.eyes {
+#pet img {
   position: absolute;
   pointer-events: none;
   -webkit-user-drag: none;

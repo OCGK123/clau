@@ -1,5 +1,5 @@
 // 클로(Clau): Claude 창 한쪽에 붙어 산다. 원하면 화면 위에 따로 떠 있을 수도 있다.
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, safeStorage } = require('electron')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -7,6 +7,8 @@ const path = require('node:path')
 const store = require('./settings-store')
 const chat = require('./chat')
 const runningApps = require('./running-apps')
+const soundFiles = require('./sound-files')
+const credentials = require('./credentials')
 const { layout: windowLayout } = require('./window-layout')
 const trackers = require('./tracker')
 const { stripEmoji } = require('./clean')
@@ -45,6 +47,8 @@ let lastLayout = null
 let dragFrom = null
 let history = []
 let running = null
+let soundDialogOpen = false
+let groqCredential = null
 
 // 따라붙을 창(Claude)의 지금 모습
 let tracker = null
@@ -147,7 +151,8 @@ function applyBounds() {
   const cfg = store.get()
   const pet = petSize(cfg)
   const area = screen.getDisplayMatching({ ...petPos, ...pet }).workArea
-  const next = windowLayout({ position: petPos, pet, bubble: BUBBLE, area, expanded: false, dragging: !!dragFrom, anchors: lastLayout?.stage })
+  const art = { ...pet, artWidth: pet.width * 0.94, artTop: cfg.size * 0.06, artHeight: cfg.size * 0.94 / (cfg.view === 'bust' ? BUST : 1) }
+  const next = windowLayout({ position: petPos, pet: art, bubble: BUBBLE, area, expanded: false, dragging: !!dragFrom, anchors: lastLayout?.stage })
   petPos = next.position
   if (JSON.stringify(next) !== JSON.stringify(lastLayout)) {
     lastLayout = next
@@ -516,6 +521,8 @@ function refresh(before, cfg) {
   if (before.chatProvider !== cfg.chatProvider || (before.chatEnabled && !cfg.chatEnabled)) {
     clearChat()
   }
+  if (before.claudeFallbackToCodex !== cfg.claudeFallbackToCodex || before.groqFallbackEnabled !== cfg.groqFallbackEnabled) cancelChat(true)
+  if (before.claudePath !== cfg.claudePath || before.model !== cfg.model) chat.clearAvailability()
   if (!cfg.chatEnabled) setChatOpen(false)
   if (before.followClaudeCode !== cfg.followClaudeCode) watchState()
   if (before.autostart !== cfg.autostart) setAutostart(cfg.autostart)
@@ -768,6 +775,7 @@ function settingsInfo() {
   return {
     cfg: store.get(),
     saveError: store.getSaveError(),
+    groqCredential: groqCredential?.info() || { configured: false, persistent: false },
     models: store.MODELS,
     defaultPersona: store.DEFAULT_PERSONA,
     claudeFound: find('claude', store.get().claudePath),
@@ -844,9 +852,11 @@ function wireIpc() {
       question,
       history,
       cfg,
+      groqApiKey: groqCredential?.get() || '',
       cwd: app.getPath('userData'),
       onDelta: (_piece, whole) => { if (running === job) sendChat('chat:delta', tidy(whole)) },
       onRateLimit: info => { if (running === job) sendChat('chat:ratelimit', info) },
+      onProvider: info => queueMicrotask(() => { if (running === job) sendChat('chat:provider', info) }),
     })
     running = job
     job.done
@@ -870,6 +880,40 @@ function wireIpc() {
 
   ipcMain.handle('settings:get', settingsInfo)
   ipcMain.handle('settings:apps', () => runningApps.list({ pid: process.pid, dir: app.getPath('userData') }))
+  ipcMain.handle('groq:key', (e, value) => {
+    if (e.sender !== settingsWin?.webContents) throw new Error('설정 창에서 키를 입력해 주세요.')
+    if (value === null) groqCredential.clear()
+    else groqCredential.set(value)
+    return settingsInfo()
+  })
+  ipcMain.handle('sound:select', async (e, kind) => {
+    if (!['petting', 'talking'].includes(kind) || e.sender !== settingsWin?.webContents) throw new Error('설정 창에서 효과음을 선택해 주세요.')
+    if (soundDialogOpen) return { cancelled: true, info: settingsInfo() }
+    soundDialogOpen = true
+    try {
+      const result = await dialog.showOpenDialog(settingsWin, {
+        title: kind === 'petting' ? '쓰다듬기 효과음 고르기' : '말하기 효과음 고르기',
+        properties: ['openFile'],
+        filters: [{ name: '효과음 파일', extensions: ['wav', 'mp3', 'ogg', 'm4a', 'flac', 'webm'] }],
+      })
+      if (result.canceled || !result.filePaths[0]) return { cancelled: true, info: settingsInfo() }
+      const file = await soundFiles.importFile(result.filePaths[0], app.getPath('userData'))
+      applySettings({ [`${kind}SoundFile`]: file, [`${kind}Sound`]: 'custom' })
+      return { cancelled: false, info: settingsInfo(), file }
+    } catch (error) {
+      return { cancelled: false, error: String(error.message || error), info: settingsInfo() }
+    } finally { soundDialogOpen = false }
+  })
+  ipcMain.handle('sound:read', async (_e, kind) => {
+    if (!['petting', 'talking'].includes(kind)) throw new Error('알 수 없는 효과음이에요.')
+    const meta = store.get()[`${kind}SoundFile`]
+    const bytes = await soundFiles.readFile(meta, app.getPath('userData'))
+    return { id: meta.id, bytes }
+  })
+  ipcMain.on('sound:error', (_e, info) => {
+    if (!info || !['petting', 'talking'].includes(info.kind) || typeof info.message !== 'string') return
+    settingsWin?.webContents.send('sound:error', { kind: info.kind, message: info.message.slice(0, 500) })
+  })
   ipcMain.handle('settings:set', (_e, patch) => {
     applySettings(patch)
     return settingsInfo()
@@ -997,10 +1041,11 @@ async function selfTest(dir) {
   await wait(100)
   console.log('drag check', await js('JSON.stringify({down,dragging,mode,eyes:petEl.dataset.eyes})'))
   check(await js('dragging && mode === "held" && petEl.dataset.eyes === "x"'), 'Dragging uses held state and X eyes')
-  check(await js('imgs.eyes_x.tagName.toLowerCase() === "svg" && imgs.eyes_x.querySelectorAll("path").length === 2'), 'Both eyes have individual X shapes')
+  check(await js('imgs.eyes_x.tagName.toLowerCase() === "img" && imgs.eyes_x.src.endsWith("/assets/eyes_x.png")'), 'Held eyes use the original artwork')
   check(win.getBounds().width > pet.width, 'Held character receives transparent sway room')
   await shot('held-x-eyes')
-  win.webContents.sendInputEvent({ type: 'mouseUp', x: px + 30, y: py + 2, globalX: 330 + px, globalY: 302 + py, button: 'left', clickCount: 1 })
+  const heldBounds = win.getBounds()
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: 330 + px - heldBounds.x, y: 302 + py - heldBounds.y, globalX: 330 + px, globalY: 302 + py, button: 'left', clickCount: 1 })
   await wait(100)
   check(await js('!dragging && down === null && bodyEl.style.transform === ""'), 'Releasing clears capture motion')
   check(win.getBounds().width === pet.width, 'Release restores normal window size')
@@ -1030,6 +1075,32 @@ async function selfTest(dir) {
   check(await settingsJs('!el("codexModel").closest(".row").hidden && el("claudeModelFields").hidden'), 'Codex selection reveals correct provider settings')
   await settingsJs('showTab("chat")')
   await shot('settings-codex', settingsWin)
+  // Native selection is stubbed only in this isolated test profile; decoding
+  // still uses the real renderer AudioContext and IPC managed-file reader.
+  const wavPath = path.join(dir, 'custom-effect.wav')
+  const wav = Buffer.alloc(44 + 1600)
+  wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8)
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22)
+  wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34)
+  wav.write('data', 36); wav.writeUInt32LE(1600, 40)
+  for (let i = 0; i < 800; i++) wav.writeInt16LE(Math.round(Math.sin(i / 8) * 3000), 44 + i * 2)
+  fs.writeFileSync(wavPath, wav)
+  const originalDialog = dialog.showOpenDialog
+  dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [wavPath] })
+  try {
+    await settingsJs('chooseSound("petting")')
+    await settingsJs('saveQueue')
+    check(store.get().pettingSound === 'custom' && !!store.get().pettingSoundFile, 'Custom sound file selection persists through native picker IPC')
+    await settingsJs('previewSound.prepare("petting")')
+    fs.unlinkSync(wavPath)
+    const copied = await soundFiles.readFile(store.get().pettingSoundFile, app.getPath('userData'))
+    check(copied.equals(wav), 'Imported sound still works after original file is deleted')
+    await settingsJs('window.pet.setGroqKey("gsk_mock_for_local_tests_only_12345")')
+    check(groqCredential.info().configured && !JSON.stringify(settingsInfo()).includes('gsk_mock'), 'Groq key IPC exposes status without returning secret')
+    check(!fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8').includes('gsk_mock'), 'Groq key is never saved in general settings')
+  } finally { dialog.showOpenDialog = originalDialog }
+  await settingsJs('showTab("react")')
+  await shot('settings-custom-sound', settingsWin)
   settingsWin.close()
 
   // Chat owns a different native surface. Capture every native pet visibility /
@@ -1096,6 +1167,23 @@ async function selfTest(dir) {
       await shot(`chat-${provider}`)
       await shot(`bubble-${provider}`, bubbleWin)
     }
+    applySettings({ chatProvider: 'claude', claudeFallbackToCodex: true })
+    chat.clearAvailability()
+    await wait(80)
+    await bjs('input.value="force fallback";form.requestSubmit()')
+    for (let i = 0; i < 100 && await bjs('busy'); i++) await wait(50)
+    check(await bjs('answer.textContent === "Hello from codex" && providerState.provider === "codex" && providerState.fallback'), 'Claude quota failure automatically completes through Codex')
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () => new Response('data: '+JSON.stringify({choices:[{delta:{content:'Hello from groq'},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+    try {
+      applySettings({ groqFallbackEnabled: true })
+      chat.clearAvailability()
+      await wait(80)
+      await bjs('input.value="force groq";form.requestSubmit()')
+      for (let i = 0; i < 100 && await bjs('busy'); i++) await wait(50)
+      check(await bjs('answer.textContent === "Hello from groq" && providerState.provider === "groq"'), 'Both unavailable CLIs automatically complete through Groq streaming')
+      await shot('bubble-groq', bubbleWin)
+    } finally { globalThis.fetch = originalFetch }
     await bjs('input.value="cancel me"; form.requestSubmit()')
     await wait(80)
     applySettings({ chatEnabled: false })
@@ -1160,6 +1248,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', (_e, argv) => onSecondLaunch(argv))
   app.whenReady().then(() => {
     store.init(app.getPath('userData'))
+    groqCredential = credentials.create(app.getPath('userData'), safeStorage)
     layers = JSON.parse(fs.readFileSync(path.join(ASSETS, 'layers.json'), 'utf8'))
     wireIpc()
     startTracker()

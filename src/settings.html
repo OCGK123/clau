@@ -29,6 +29,21 @@
           <select id="chatProvider" data-key="chatProvider"><option value="claude">Claude Code</option><option value="codex">Codex</option></select>
         </div>
         <p id="providerStatus" class="note" role="status"></p>
+        <div class="row" data-when="chatProvider=claude">
+          <div class="text"><label for="claudeFallbackToCodex">Claude를 쓸 수 없으면 Codex로</label><p>사용량 소진, 로그인·연결 문제 때 같은 질문을 이어서 보내요. Claude를 다시 쓸 수 있으면 돌아와요.</p><p id="fallbackStatus" class="note"></p></div>
+          <input type="checkbox" class="switch" id="claudeFallbackToCodex" data-key="claudeFallbackToCodex" />
+        </div>
+        <div class="row">
+          <div class="text"><label for="groqFallbackEnabled">둘 다 쓸 수 없으면 Groq로</label><p>Claude → Codex → Groq 순서로 시도해요. Codex를 기본으로 고르면 Codex → Groq 순서예요.</p></div>
+          <input type="checkbox" class="switch" id="groqFallbackEnabled" data-key="groqFallbackEnabled" />
+        </div>
+        <div class="row stack" data-when="groqFallbackEnabled=true">
+          <label for="groqKey">Groq API 키</label>
+          <div class="secret-field"><input type="password" id="groqKey" autocomplete="new-password" spellcheck="false" placeholder="gsk_…" /><button type="button" id="saveGroqKey">저장</button><button type="button" id="clearGroqKey">삭제</button></div>
+          <p id="groqKeyStatus" class="status" role="status"></p>
+          <label for="groqModel">Groq 모델</label>
+          <input type="text" id="groqModel" data-key="groqModel" placeholder="openai/gpt-oss-120b" spellcheck="false" />
+        </div>
         <div id="claudeModelFields" data-when="chatProvider=claude">
         <div class="row">
           <label for="model">모델</label>
@@ -188,11 +203,19 @@
         </div>
         <div class="row">
           <label for="pettingSound">쓰다듬을 때</label>
-          <div class="control-pair"><select id="pettingSound" data-key="pettingSound"><option value="chime">맑은 종소리</option><option value="pop">톡톡</option><option value="none">소리 없음</option></select><button type="button" id="previewPetting" aria-label="쓰다듬기 소리 미리 듣기">듣기</button></div>
+          <div class="control-pair"><select id="pettingSound" data-key="pettingSound"><option value="chime">맑은 종소리</option><option value="pop">톡톡</option><option value="custom">직접 고른 파일</option><option value="none">소리 없음</option></select><button type="button" id="previewPetting" aria-label="쓰다듬기 소리 미리 듣기">듣기</button></div>
+        </div>
+        <div class="row stack sound-file-row">
+          <div class="head"><span id="pettingFileName" class="file-name"></span><button type="button" id="choosePettingSound">파일 고르기</button></div>
+          <p id="pettingFileStatus" class="status" role="status">WAV, MP3, OGG, M4A, FLAC, WebM · 최대 10MB</p>
         </div>
         <div class="row">
           <label for="talkingSound">말할 때</label>
-          <div class="control-pair"><select id="talkingSound" data-key="talkingSound"><option value="soft">작은 말소리</option><option value="type">타닥타닥</option><option value="none">소리 없음</option></select><button type="button" id="previewTalking" aria-label="말하기 소리 미리 듣기">듣기</button></div>
+          <div class="control-pair"><select id="talkingSound" data-key="talkingSound"><option value="soft">작은 말소리</option><option value="type">타닥타닥</option><option value="custom">직접 고른 파일</option><option value="none">소리 없음</option></select><button type="button" id="previewTalking" aria-label="말하기 소리 미리 듣기">듣기</button></div>
+        </div>
+        <div class="row stack sound-file-row">
+          <div class="head"><span id="talkingFileName" class="file-name"></span><button type="button" id="chooseTalkingSound">파일 고르기</button></div>
+          <p id="talkingFileStatus" class="status" role="status">짧은 소리를 고르면 말할 때 겹치지 않고 재생해요.</p>
         </div>
       </section>
 
