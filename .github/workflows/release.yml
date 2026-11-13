@@ -31,8 +31,12 @@ jobs:
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')"
           tag="v$version"
+          # 릴리스 설명은 이 버전 부분만(예전 버전 변경점까지 쌓이지 않게).
+          node scripts/release-notes.mjs "$version" > release-notes.md
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$GITHUB_SHA" --title "Clau $version" --notes-file CHANGELOG.md --draft
+            gh release create "$tag" --target "$GITHUB_SHA" --title "Clau $version" --notes-file release-notes.md --draft
+          else
+            gh release edit "$tag" --title "Clau $version" --notes-file release-notes.md
           fi
           gh release upload "$tag" dist/Clau-*.zip dist/Clau-Installer-* dist/latest.json --clobber
           gh release edit "$tag" --draft=false --latest

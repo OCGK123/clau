@@ -4,6 +4,7 @@
 import { packager } from '@electron/packager'
 import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
+import { section } from './release-notes.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -78,7 +79,7 @@ console.log('→ dist/Clau-Installer-*  (Windows, macOS, Linux)')
 // 앱의 업데이트와 한 줄 설치가 읽는 목록: 버전 번호, 바뀐 점, 파일마다 크기와 sha256.
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')
-const notes = (changelog.split(/^# /m)[1] || '').split('\n').slice(1).join('\n').trim()
+const notes = section(changelog, pkg.version) // 이 버전의 바뀐 점만
 const files = {}
 for (const name of fs.readdirSync(dist).filter(name => /^Clau-.+\.zip$/.test(name)).sort()) {
   const data = fs.readFileSync(path.join(dist, name))
