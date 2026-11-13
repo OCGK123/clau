@@ -68,6 +68,13 @@ body.keyboard #stage:focus-visible {
 #pet [data-role='eyes_open'] {
   transform-origin: 50% 86%;
 }
+/* 마우스 따라보기: 눈만 살짝 그쪽으로. 깜빡임은 transform을 쓰므로 translate를 따로 쓴다. */
+#pet [data-role='eyes_open'],
+#pet [data-role='eyes_closed'],
+#pet [data-role='eyes_happy'] {
+  translate: var(--look-x, 0px) var(--look-y, 0px);
+  transition: translate 0.14s ease-out;
+}
 #pet [data-role='mouth_open'] {
   transform-origin: 50% 20%;
 }

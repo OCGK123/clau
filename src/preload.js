@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('pet', {
   onChatProvider: fn => on('chat:provider', fn),
   onInput: fn => on('pet:input', fn),
   onHello: fn => on('pet:hello', fn),
+  onLook: fn => on('pet:look', fn),
   onClaudeCode: fn => on('cc:state', fn),
   onDelta: fn => on('chat:delta', fn),
   onDone: fn => on('chat:done', fn),

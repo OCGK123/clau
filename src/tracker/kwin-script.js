@@ -6,6 +6,8 @@
   var OWN_PID = __PID__
   var TARGET = __TARGET_SPEC__
   var IN_TASKBAR = __TASKBAR__
+  var LOOK = __LOOK__ // 눈이 마우스를 따라볼 때만 마우스 자리를 알린다
+  var lastLook = 0
 
   var target = null
   var pet = null
@@ -182,6 +184,15 @@
       if (entered && !inWindow) refreshHit()
       inWindow = entered
       updateHover()
+      // 다른 앱 위에 있는 마우스 자리는 창 관리자만 안다. 1초에 30번까지만 알린다.
+      if (LOOK && pet) {
+        var now = Date.now()
+        if (now - lastLook >= 33) {
+          lastLook = now
+          var p = workspace.cursorPos
+          callDBus(SERVICE, '/Tracker', 'local.clau.Tracker', 'Cursor', Math.round(p.x) + ',' + Math.round(p.y))
+        }
+      }
     })
   }
   report()

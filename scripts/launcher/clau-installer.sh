@@ -142,7 +142,7 @@ fi
 if command -v sha256sum >/dev/null 2>&1; then hash() { sha256sum "$1" | cut -d' ' -f1; }
 else hash() { shasum -a 256 "$1" | cut -d' ' -f1; }
 fi
-size_of() { wc -c <"$1" 2>/dev/null | tr -d ' '; }
+size_of() { if [ -f "$1" ]; then wc -c <"$1" | tr -d ' '; else echo 0; fi; }
 version_of() { [ -n "$1" ] && [ -f "$1" ] && sed -n 's/.*"version" *: *"\([0-9.]*\)".*/\1/p' "$1" | head -n 1; }
 # $1 이 $2 보다 새 버전이면 0
 newer() {

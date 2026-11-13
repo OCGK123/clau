@@ -54,7 +54,7 @@ async function renderer() {
     init: () => Promise.resolve({ cfg: { ...DEFAULTS }, layers: JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/layers.json'), 'utf8')), bust: 0.69, ccState: null, visible: true }),
     expand: value => expansions.push(value), ask() {}, cancel() {}, menu() {}, drag() {},
   }
-  for (const name of ['Cfg', 'Input', 'Hello', 'ClaudeCode', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Layout', 'Visibility', 'ChatVisibility', 'ChatStarted', 'ChatCancelled', 'ChatProvider']) pet[`on${name}`] = fn => { callbacks[name] = fn }
+  for (const name of ['Cfg', 'Input', 'Hello', 'ClaudeCode', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Layout', 'Visibility', 'ChatVisibility', 'ChatStarted', 'ChatCancelled', 'ChatProvider', 'Look']) pet[`on${name}`] = fn => { callbacks[name] = fn }
   const files = { played: [] }
   const audio = { pats: 0, talks: 0, configure() {}, unlock() {}, pat() { audio.pats++ }, talk() { audio.talks++ }, play: name => files.played.push(name), stop() { audioStops.push('all') }, stopTalk() { audioStops.push('talk') }, dispose() {}, setVisible: value => audioVisibility.push(value) }
   // 몸짓 엔진·이펙트·녹음 효과음은 각자 테스트가 따로 있다. 여기서는 호출 기록만 남긴다.
@@ -289,4 +289,22 @@ test('rapid pats each play a petting sound, and the pet never talks over the cha
   r.callbacks.Delta('글자마다 소리는 말풍선이 낸다')
   r.advance(3000)
   assert.equal(r.audio.talks, 0)
+})
+
+test('eyes look toward the mouse within a small reach, and rest when the setting is off', async () => {
+  const r = await renderer()
+  r.callbacks.Layout({ stage: { left: 100, top: 100, width: 184, height: 220 }, shape: r.evaluate('currentShape()') })
+  const style = r.elements.pet.style
+  const px = value => Number(String(value).replace('px', ''))
+  r.callbacks.Look({ x: 2000, y: 160 }) // 멀리 오른쪽
+  assert.ok(px(style['--look-x']) > 2, `x ${style['--look-x']}`)
+  assert.ok(px(style['--look-x']) <= 220 * 0.016 + 0.01, 'never leaves the face')
+  r.callbacks.Look({ x: -2000, y: 2000 }) // 멀리 왼쪽 아래
+  assert.ok(px(style['--look-x']) < 0 && px(style['--look-y']) > 0)
+  r.callbacks.Cfg({ ...r.evaluate('cfg'), flip: true })
+  r.callbacks.Look({ x: 2000, y: 160 })
+  assert.ok(px(style['--look-x']) < 0, 'mirrored art looks the right way on screen')
+  r.callbacks.Cfg({ ...r.evaluate('cfg'), flip: false, lookAtCursor: false })
+  assert.equal(style['--look-x'], '0px')
+  assert.equal(style['--look-y'], '0px')
 })

@@ -55,7 +55,7 @@ test('KWin follows the selected app, updates focus, and never follows a similar 
   }
   const messages = []
   const source = fs.readFileSync(require.resolve('../src/tracker/kwin-script.js'),'utf8')
-    .replaceAll('__SERVICE__','local.test').replaceAll('__PID__','999').replaceAll('__TASKBAR__','false')
+    .replaceAll('__SERVICE__','local.test').replaceAll('__PID__','999').replaceAll('__TASKBAR__','false').replaceAll('__LOOK__','false')
     .replaceAll('__TARGET_SPEC__',() => JSON.stringify(targetSpec({kind:'kwin',id:'claude'},'kwin')))
   vm.runInNewContext(source,{workspace,callDBus:(_a,_b,_c,_d,text)=>messages.push(JSON.parse(text))})
   assert.equal(messages.at(-1).active,'other')

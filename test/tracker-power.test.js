@@ -152,7 +152,7 @@ test('KWin repeated activation never accumulates duplicate pet geometry listener
   const pet={pid:999,normalWindow:true,resourceClass:'clau',resourceName:'clau',caption:'Clau',frameGeometry:{x:100,y:100,width:200,height:220},frameGeometryChanged:signal()}
   const workspace={windowList:()=>[pet],activeWindow:pet,windowAdded:signal(),windowRemoved:signal(),windowActivated:signal()}
   const source=fs.readFileSync(require.resolve('../src/tracker/kwin-script'),'utf8')
-    .replaceAll('__SERVICE__','local.test').replaceAll('__PID__','999').replaceAll('__TASKBAR__','false')
+    .replaceAll('__SERVICE__','local.test').replaceAll('__PID__','999').replaceAll('__TASKBAR__','false').replaceAll('__LOOK__','false')
     .replaceAll('__TARGET_SPEC__',()=>JSON.stringify(targetSpec({kind:'kwin',id:'code'},'kwin')))
   vm.runInNewContext(source,{workspace,callDBus(){}})
   for(let i=0;i<50;i++)workspace.windowActivated.callbacks[0](pet)

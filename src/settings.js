@@ -393,6 +393,7 @@ function render() {
   el('trayHow').hidden = !cfg.tray
   el('trayHow').textContent = mac ? '메뉴 막대의 클로 아이콘 메뉴에서' : '트레이의 클로 아이콘 메뉴에서'
   el('dragPhysics').disabled = !cfg.dragEnabled || cfg.reduceMotion
+  el('lookAtCursor').disabled = cfg.reduceMotion
   el('swingStyle').disabled = !cfg.dragEnabled || !cfg.dragPhysics || cfg.reduceMotion
   for (const id of ['soundVolume', 'pettingSound', 'talkingSound', 'chatSound']) el(id).disabled = !cfg.soundEnabled
   el('previewChat').disabled = !cfg.soundEnabled || !cfg.soundVolume || cfg.chatSound === false

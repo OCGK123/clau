@@ -52,6 +52,8 @@ let layers = null
 let petPos = { x: 0, y: 0 } // 말풍선을 접었을 때 창의 왼쪽 위
 let expanded = false
 let bubbleClosing = false
+let lookTimer = null // 눈이 마우스를 따라볼 때: 마우스 자리를 묻는 주기
+let lastLook = ''
 let focusChatUntil = 0 // 이때까지 말풍선이 입력을 받을 수 있게 앞으로 나와야 한다(방금 사용자가 열었다)
 let lastBubbleLayout = null
 let lastLayout = null
@@ -357,6 +359,7 @@ function syncVisibility() {
     if (!win.isVisible()) {
       win.showInactive()
       win.webContents.send('pet:visibility', true)
+      syncLook()
       setOnTop()
       place()
       syncInput()
@@ -372,6 +375,7 @@ function syncVisibility() {
       if (win && !wantVisible()) {
         win.webContents.send('pet:visibility', false)
         win.hide()
+        syncLook()
         bubbleWin?.webContents.send('pet:visibility', false)
         bubbleWin?.hide()
         syncInput()
@@ -404,6 +408,8 @@ function startTracker() {
     target: store.get().targetAppSelection || store.get().targetApp,
     showWhen: store.get().showWhen,
     taskbar: store.get().showInDock,
+    look: wantsLook(),
+    onCursor: (x, y) => sendLook({ x: x * wmScale, y: y * wmScale }),
     pid: process.pid,
     dir: app.getPath('userData'),
     wantsFocus: () => expanded && Date.now() < focusChatUntil,
@@ -434,6 +440,37 @@ function startTracker() {
       syncVisibility()
     },
   })
+}
+
+// ── 눈이 마우스 따라보기 ───────────────────────────────────────────────
+function wantsLook(cfg = store.get()) {
+  return !!cfg.lookAtCursor && !cfg.reduceMotion && !TESTING
+}
+
+/** 마우스 자리를 화면에 알린다(펫 창 기준). 같은 자리면 보내지 않는다. */
+function sendLook(point) {
+  if (!win || !win.isVisible() || !wantsLook()) return
+  const b = win.getBounds()
+  const x = Math.round(point.x - b.x)
+  const y = Math.round(point.y - b.y)
+  const text = `${x},${y}`
+  if (text === lastLook) return
+  lastLook = text
+  win.webContents.send('pet:look', { x, y })
+}
+
+/** 켜져 있고 보이는 동안만 마우스를 살핀다. KDE(Wayland)는 창 관리자 스크립트가 알려 준다. */
+function syncLook() {
+  clearInterval(lookTimer)
+  lookTimer = null
+  if (!win) return
+  if (!wantsLook() || !win.isVisible()) {
+    if (lastLook) win.webContents.send('pet:look', null)
+    lastLook = ''
+    return
+  }
+  if (tracker?.kind === 'kwin' && !trackError) return
+  lookTimer = setInterval(() => sendLook(screen.getCursorScreenPoint()), 33)
 }
 
 // ── 고정 모드: 마우스를 받을지 말지 ─────────────────────────────────────
@@ -535,6 +572,7 @@ function createPet() {
   me.webContents.once('did-finish-load', () => {
     lastInput = ''
     syncInput()
+    syncLook()
   })
   setOnTop()
   place()
@@ -635,6 +673,8 @@ function refresh(before, cfg) {
   if (before.autostart !== cfg.autostart) setAutostart(cfg.autostart)
   if (before.historyTurns !== cfg.historyTurns) history = cfg.historyTurns ? history.slice(-cfg.historyTurns) : []
   if (before.wakeWithClaude !== cfg.wakeWithClaude) writeAppInfo()
+  // KDE는 창 관리자 스크립트가 마우스 자리를 알려 주므로, 켜고 끌 때 스크립트를 다시 올린다.
+  if (wantsLook(before) !== wantsLook(cfg) && trackers.pick() === 'kwin') startTracker()
   if (before.view !== cfg.view && cfg.view === 'auto') { place(); seatIfOnFloor() }
   syncDock(before)
   setOnTop()
@@ -643,6 +683,7 @@ function refresh(before, cfg) {
   lastInput = ''
   syncInput()
   syncTray()
+  syncLook()
   win?.webContents.send('cfg', cfg)
   settingsWin?.webContents.send('cfg', cfg)
   bubbleWin?.webContents.send('cfg', cfg)
@@ -1706,6 +1747,7 @@ if (!app.requestSingleInstanceLock()) {
     clearTimeout(inputTimer)
     clearTimeout(stateRefreshTimer)
     clearTimeout(updateTimer)
+    clearInterval(lookTimer)
     stateWatcher?.close()
     if (cleaned || !tracker) return
     cleaned = true

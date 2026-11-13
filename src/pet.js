@@ -119,6 +119,19 @@ function layout() {
   // 작은 친구는 둥실거리는 상자째로 자리를 잡는다.
   if (layers.layers.buddy) put(buddyEl, layers.layers.buddy)
 
+  // 마우스 따라보기: 두 눈 한가운데(stage 기준)와 움직일 수 있는 폭.
+  const eyes = layers.layers.eyes_open
+  if (eyes) {
+    const local = (eyes[0] - vx + eyes[2] / 2) * s
+    eyeAim = {
+      x: (petW - vw * s) / 2 + (cfg.flip ? vw * s - local : local),
+      y: unit * HEADROOM + (eyes[1] - vy + eyes[3] / 2) * s,
+      reachX: unit * 0.016, // 키의 1.6%
+      reachY: unit * 0.01,
+    }
+  }
+  aimEyes()
+
   // z는 머리 오른쪽 위에서 떠오른다.
   const [bx, by, bw, bh] = layers.layers.base ?? layers.view
   for (const z of petEl.querySelectorAll('.z')) {
@@ -126,6 +139,32 @@ function layout() {
     z.style.top = `${(by - vy + bh * 0.12) * s}px`
   }
 }
+
+// ── 마우스 따라보기 ───────────────────────────────────────────────────
+let eyeAim = null // 눈 가운데와 움직일 수 있는 폭
+let look = null // 펫 창 기준 마우스 자리
+function aimEyes() {
+  const s = geometry?.stage
+  if (!look || !eyeAim || !s || !cfg?.lookAtCursor || cfg.reduceMotion) {
+    petEl.style.setProperty('--look-x', '0px')
+    petEl.style.setProperty('--look-y', '0px')
+    return
+  }
+  const dx = look.x - (s.left + eyeAim.x)
+  const dy = look.y - (s.top + eyeAim.y)
+  const distance = Math.hypot(dx, dy) || 1
+  // 가까우면 조금, 멀어질수록 끝까지. 화면 반대편을 봐도 눈이 얼굴 밖으로 나가지 않는다.
+  const reach = Math.tanh(distance / (eyeAim.reachX * 40))
+  let x = (dx / distance) * reach * eyeAim.reachX
+  const y = (dy / distance) * reach * eyeAim.reachY
+  if (cfg.flip) x = -x // 뒤집힌 그림 안에서는 좌우가 반대
+  petEl.style.setProperty('--look-x', `${x.toFixed(2)}px`)
+  petEl.style.setProperty('--look-y', `${y.toFixed(2)}px`)
+}
+window.pet.onLook?.(point => {
+  look = point
+  aimEyes()
+})
 
 /** Main owns screen coordinates. These responsive offsets also hold the same
  * screen anchor during a native window resize, before the next IPC arrives. */
@@ -141,6 +180,7 @@ function applyWindowLayout(next) {
     stage.style.clipPath = Number.isFinite(s.cut) ? `polygon(-4000px -4000px, 4000px -4000px, 4000px ${s.cut}px, -4000px ${s.cut}px)` : ''
   }
   if (reshaped && layers && cfg) layout()
+  else aimEyes()
 }
 
 /** 쓰다듬는 영역(화면 px, stage 기준): 그림 꼭대기부터 눈 바로 위까지. 얼굴과 몸은 말 거는 자리다. */
