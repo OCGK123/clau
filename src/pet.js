@@ -24,7 +24,7 @@ const STALE_MS = 10 * 60_000 // Claude Code 쪽 상태가 이보다 오래되면
 const DRAG_START_PX = 4
 const PAT_COMBO_MS = 600 // 이 안에 또 누르면 연타로 친다
 const MAX_HEARTS = 8
-const HINT = '안녕, 나 클로야! 뭐든 물어봐.'
+const HINT = '안녕! 난 클로야. 만나서 반가워!!!!!!'
 const HEART = '<svg viewBox="0 0 20 18"><path d="M10 16.6C4.2 12.3 1.2 9.5 1.2 6a4.5 4.5 0 0 1 8.8-1.4A4.5 4.5 0 0 1 18.8 6c0 3.5-3 6.3-8.8 10.6z"/></svg>'
 
 // 그리는 순서: 작은 친구 → 몸 → 눈 → 입 → 앞머리
