@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('pet', {
   onInput: fn => on('pet:input', fn),
   onHello: fn => on('pet:hello', fn),
   onLook: fn => on('pet:look', fn),
+  onPower: fn => on('pet:power', fn),
   onClaudeCode: fn => on('cc:state', fn),
   onDelta: fn => on('chat:delta', fn),
   onDone: fn => on('chat:done', fn),

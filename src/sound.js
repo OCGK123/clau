@@ -43,6 +43,18 @@
     const reported = new Set()
 
     const enabled = () => visible && !!cfg.soundEnabled && Number(cfg.soundVolume) > 0
+    // 소리가 다 끝나고 이만큼 조용하면 AudioContext를 잠재운다. 깨어 있는 AudioContext는 소리가 없어도
+    // 오디오 장치와 오디오 스레드를 계속 붙잡고 있어 배터리를 쓴다. 다음 소리 때 자동으로 깨어난다.
+    const IDLE_SUSPEND_MS = 4000
+    let idleTimer = null
+    const quiet = () => Object.values(playing).every(list => list.length === 0)
+    function scheduleSuspend() {
+      clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        idleTimer = null
+        if (quiet() && context?.state === 'running') context.suspend().catch(() => {})
+      }, IDLE_SUSPEND_MS)
+    }
     const volume = () => Math.min(100, Math.max(0, Number(cfg.soundVolume) || 0)) / 100
 
     function ensureContext() {
@@ -109,6 +121,7 @@
       } catch { return }
       if (token !== generation || (!force && !enabled())) return
       const audio = context
+      clearTimeout(idleTimer)
       const source = audio.createBufferSource()
       const gain = audio.createGain()
       source.buffer = sound.buffer
@@ -128,6 +141,7 @@
         if (at >= 0) list.splice(at, 1)
         source.disconnect()
         gain.disconnect()
+        if (quiet()) scheduleSuspend()
       }
       source.start(audio.currentTime, 0, sound.end)
     }
@@ -169,6 +183,7 @@
           ensureContext()
           if (context.state === 'suspended') context.resume().catch(() => {})
           for (const kind of ['petting', 'talking']) { const target = pick(kind); if (target) decode(target).catch(() => {}) }
+          scheduleSuspend() // 눌러서 깨웠지만 소리가 안 나면 다시 잠재운다
         } catch { /* 오디오 장치가 없어도 앱은 돈다 */ }
       },
       pat() { return start(pick('petting'), 'petting') },
@@ -191,6 +206,7 @@
       stop,
       stopTalk: () => stopGroup('talking'),
       dispose() {
+        clearTimeout(idleTimer)
         stop()
         buffers.clear()
         context?.close().catch(() => {})

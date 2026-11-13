@@ -191,6 +191,9 @@ function aimEyes() {
   petEl.style.setProperty('--look-x', `${x.toFixed(2)}px`)
   petEl.style.setProperty('--look-y', `${y.toFixed(2)}px`)
 }
+// 배터리로 돌 때는 가만히 있는 동안의 숨쉬기를 쉰다.
+window.pet.onPower?.(state => window.PetAnimator.setIdleMotion(!state?.battery))
+
 window.pet.onLook?.(point => {
   look = point
   aimEyes()

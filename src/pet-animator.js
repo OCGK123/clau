@@ -229,8 +229,15 @@ const PetAnimator = (() => {
   }
 
   let paused = false
+  let idleMotion = true
 
   return {
+    /** 가만히 있을 때 숨쉬기를 켜고 끈다(배터리 모드). 끄면 지금 모습에서 부드럽게 멈춘다. */
+    setIdleMotion(on) {
+      if (idleMotion === !!on) return
+      idleMotion = !!on
+      if (mode === 'idle') this.setMode('idle', true)
+    },
     /** 창이 숨겨지면 루프를 멈추고, 다시 보이면 지금 상태에서 이어 간다(백그라운드 전력 절약). */
     setPaused(on) {
       paused = !!on
@@ -266,7 +273,8 @@ const PetAnimator = (() => {
         tr.blendStart = at
         tr.blendMs = BLEND_MS
         tr.start = at
-        tr.fn = tr.table[mode] ?? null
+        // 배터리로 돌 때는 가만히 있는 동안의 숨쉬기를 쉰다(매 프레임 그리기를 멈춰 전력 절약).
+        tr.fn = mode === 'idle' && !idleMotion ? null : tr.table[mode] ?? null
       }
       if (!force && ENTRY[mode]) {
         // 상태가 바뀔 때 주인과 작은 친구가 같이 꿀렁. 작은 친구는 1.8배 과장.

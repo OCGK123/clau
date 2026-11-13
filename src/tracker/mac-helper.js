@@ -39,9 +39,13 @@ function run(argv) {
   const out = $.NSFileHandle.fileHandleWithStandardOutput
   const say = text => out.writeData($(text + '\n').dataUsingEncoding($.NSUTF8StringEncoding))
   const options = (listing ? $.kCGWindowListOptionAll : $.kCGWindowListOptionOnScreenOnly) | $.kCGWindowListExcludeDesktopElements
+  // 따라붙을 창이 2초 넘게 그대로면 0.35초마다, 움직이기 시작하면 다시 0.15초마다 살핀다.
+  // 창 목록 전체를 0.15초마다 읽는 일은 가볍지 않아서, 가만히 있을 때까지 그렇게 할 필요는 없다.
+  let quietSince = Date.now()
   const pause = () => {
-    const until = Date.now() + 150
-    $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.15))
+    const seconds = Date.now() - quietSince > 2000 ? 0.35 : 0.15
+    const until = Date.now() + seconds * 1000
+    $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(seconds))
     // An empty run loop may return early; never turn that into a busy loop.
     const remaining = until - Date.now()
     if (remaining > 0) delay(remaining / 1000)
@@ -81,7 +85,7 @@ function run(argv) {
     lastFront = frontApp?.pid ?? null
     if (msg) {
       const text = JSON.stringify(msg)
-      if (text !== last) { last = text; say(text) }
+      if (text !== last) { last = text; say(text); quietSince = Date.now() }
     }
     // Service AppKit's run loop so frontmostApplication stays current.
     pause()

@@ -101,3 +101,22 @@ test('hiding stops every voice', async () => {
   await sound.pat()
   assert.equal(started.length, 2)
 })
+
+test('a quiet audio context is suspended after a few seconds so it stops holding the audio device', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { Ctx, started } = fakeAudio()
+  let ctx = null
+  class Spy extends Ctx { constructor() { super(); ctx = this } }
+  const sound = create({ AudioContext: Spy, load: async name => new TextEncoder().encode(name) })
+  sound.configure(cfg())
+  await sound.pat()
+  assert.equal(ctx.state, 'running')
+  started[0].onended() // 소리가 끝남
+  t.mock.timers.tick(3999)
+  assert.equal(ctx.state, 'running')
+  t.mock.timers.tick(1)
+  await settle()
+  assert.equal(ctx.state, 'suspended')
+  await sound.pat() // 다음 소리 때 다시 깨어난다
+  assert.equal(ctx.state, 'running')
+})

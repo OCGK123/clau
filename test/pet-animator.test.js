@@ -75,3 +75,16 @@ test('pausing stops the frame loop', () => {
   PetAnimator.setPaused(false)
   assert.ok(queue.length > 0)
 })
+
+test('on battery the idle breathing stops smoothly and the loop sleeps', () => {
+  PetAnimator.setMode('idle')
+  run(1000)
+  PetAnimator.setIdleMotion(false)
+  run(600)
+  queue.length = 0
+  now += 16.7
+  assert.equal(queue.length, 0, 'no more frames while idle on battery')
+  assert.equal(body.style.transform, '')
+  PetAnimator.setIdleMotion(true)
+  assert.ok(queue.length > 0, 'breathing resumes on AC power')
+})

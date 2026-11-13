@@ -1,5 +1,5 @@
 // 클로(Clau): Claude 창 한쪽에 붙어 산다. 원하면 화면 위에 따로 떠 있을 수도 있다.
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, safeStorage, shell, Notification } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, safeStorage, shell, Notification, powerMonitor } = require('electron')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -305,6 +305,7 @@ function focusBubble() {
 function setChatOpen(on) {
   on = !!on && store.get().chatEnabled
   if (on) {
+    clearTimeout(bubbleIdleTimer)
     expanded = true
     bubbleClosing = false
     focusChatUntil = Date.now() + 2000
@@ -318,6 +319,24 @@ function setChatOpen(on) {
   }
   sendChat('chat:visibility', { open: on, layout: chatLayout() })
   syncInput()
+}
+
+/** 배터리로 도는지 화면에 알린다: 배터리일 땐 가만히 있는 동안의 숨쉬기를 쉰다. */
+function sendPower() {
+  try { win?.webContents.send('pet:power', { battery: powerMonitor.isOnBatteryPower() }) } catch { /* 일부 Linux에서는 알 수 없다 */ }
+}
+
+// 말풍선 창은 닫힌 채로 이만큼 지나면 없앤다(렌더러 프로세스 하나만큼의 메모리를 돌려준다).
+// 다시 열면 새로 만든다. 대화 기록은 main이 들고 있어 그대로 이어진다.
+const BUBBLE_IDLE_DESTROY_MS = 10 * 60_000
+let bubbleIdleTimer = null
+function scheduleBubbleCleanup() {
+  clearTimeout(bubbleIdleTimer)
+  bubbleIdleTimer = setTimeout(() => {
+    bubbleIdleTimer = null
+    if (!bubbleWin || expanded || bubbleClosing || running) return
+    bubbleWin.destroy()
+  }, BUBBLE_IDLE_DESTROY_MS)
 }
 
 /** 모드에 맞는 자리로 옮긴다. 끄는 중에는 손을 따라가야 하므로 건드리지 않는다. */
@@ -460,8 +479,11 @@ function sendLook(point) {
 }
 
 /** 켜져 있고 보이는 동안만 마우스를 살핀다. KDE(Wayland)는 창 관리자 스크립트가 알려 준다. */
+const LOOK_FAST_MS = 33
+const LOOK_SLOW_MS = 200
+const LOOK_IDLE_AFTER_MS = 1000
 function syncLook() {
-  clearInterval(lookTimer)
+  clearTimeout(lookTimer)
   lookTimer = null
   if (!win) return
   if (!wantsLook() || !win.isVisible()) {
@@ -470,7 +492,19 @@ function syncLook() {
     return
   }
   if (tracker?.kind === 'kwin' && !trackError) return
-  lookTimer = setInterval(() => sendLook(screen.getCursorScreenPoint()), 33)
+  // 마우스가 움직이는 동안은 30fps로, 1초 넘게 멈춰 있으면 5fps로 묻는다.
+  // 계속 33ms마다 깨우면 마우스를 안 쓰는 동안에도 CPU가 쉬지 못한다(배터리).
+  let still = 0
+  let lastPoint = ''
+  const tick = () => {
+    const p = screen.getCursorScreenPoint()
+    const key = `${p.x},${p.y}`
+    still = key === lastPoint ? still + 1 : 0
+    lastPoint = key
+    sendLook(p)
+    lookTimer = setTimeout(tick, still * LOOK_FAST_MS > LOOK_IDLE_AFTER_MS ? LOOK_SLOW_MS : LOOK_FAST_MS)
+  }
+  lookTimer = setTimeout(tick, LOOK_FAST_MS)
 }
 
 // ── 고정 모드: 마우스를 받을지 말지 ─────────────────────────────────────
@@ -573,6 +607,7 @@ function createPet() {
     lastInput = ''
     syncInput()
     syncLook()
+    sendPower()
   })
   setOnTop()
   place()
@@ -1135,6 +1170,7 @@ function wireIpc() {
     bubbleClosing = false
     bubbleWin.hide()
     syncInput()
+    scheduleBubbleCleanup()
   })
   ipcMain.on('pet:menu', popupMenu)
   ipcMain.on('pet:drag', (_e, phase, dx, dy) => {
@@ -1743,6 +1779,8 @@ if (!app.requestSingleInstanceLock()) {
     syncDock()
     syncTray()
     watchState()
+    powerMonitor.on('on-battery', sendPower)
+    powerMonitor.on('on-ac', sendPower)
     if (!TESTING) {
       writeAppInfo()
       // 연결해 둔 mod는 앱과 같은 버전으로 맞춰 둔다.
@@ -1764,7 +1802,7 @@ if (!app.requestSingleInstanceLock()) {
     clearTimeout(inputTimer)
     clearTimeout(stateRefreshTimer)
     clearTimeout(updateTimer)
-    clearInterval(lookTimer)
+    clearTimeout(lookTimer)
     stateWatcher?.close()
     if (cleaned || !tracker) return
     cleaned = true
