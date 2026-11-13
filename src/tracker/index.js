@@ -32,7 +32,7 @@ const fromHelper = m => ({
   fullscreen: false,
 })
 
-function create({ target, taskbar, pid, dir, showWhen = 'focused', onState, onFail, hitRect }) {
+function create({ target, taskbar, pid, dir, showWhen = 'focused', onState, onFail, hitRect, wantsFocus }) {
   const kind = pick()
   const spec = targetSpec(target, kind)
   const emit = state => onState({ ...state, focused: state.active === 'target' || state.active === 'ours' })
@@ -48,7 +48,7 @@ function create({ target, taskbar, pid, dir, showWhen = 'focused', onState, onFa
   let units = 'dip'
   if (kind === 'kwin') {
     units = 'wm'
-    backend = require('./kwin').start({ target: spec, taskbar, pid, dir, onState: emit, onFail: fail, hitRect })
+    backend = require('./kwin').start({ target: spec, taskbar, pid, dir, onState: emit, onFail: fail, hitRect, wantsFocus })
   } else if (kind === 'x11') {
     units = 'px'
     backend = require('./x11').start({ target: spec, pid, showWhen, onState: emit, onFail: fail })

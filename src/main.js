@@ -52,6 +52,7 @@ let layers = null
 let petPos = { x: 0, y: 0 } // 말풍선을 접었을 때 창의 왼쪽 위
 let expanded = false
 let bubbleClosing = false
+let focusChatUntil = 0 // 이때까지 말풍선이 입력을 받을 수 있게 앞으로 나와야 한다(방금 사용자가 열었다)
 let lastBubbleLayout = null
 let lastLayout = null
 let lastLayoutSent = ''
@@ -263,7 +264,9 @@ function createBubble() {
     ...layout.bounds, show: false, frame: false, transparent: true, backgroundColor: '#00000000',
     resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
     hasShadow: false, skipTaskbar: true, title: 'Clau Chat', acceptFirstMouse: true,
-    ...(process.platform === 'win32' ? { type: 'toolbar' } : {}),
+    // 보통 창이 아니라 도구 창으로 만든다. Windows는 작업 표시줄·Alt+Tab에서 빠지고, Linux는 창 관리자와
+    // 창 꾸미기 효과(둥근 모서리·테두리 같은)가 말풍선 둘레에 네모난 테두리를 그리지 않는다.
+    ...(process.platform !== 'darwin' ? { type: 'toolbar' } : {}),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false },
   })
   bubbleWin = me
@@ -274,7 +277,7 @@ function createBubble() {
   me.loadFile(path.join(__dirname, 'bubble.html'))
   me.webContents.once('did-finish-load', () => {
     if (bubbleWin !== me) return
-    if (expanded && wantVisible()) { me.show(); me.focus() }
+    if (expanded && wantVisible()) focusBubble()
     me.webContents.send('chat:visibility', { open: expanded, layout: chatLayout() })
   })
   me.on('closed', () => {
@@ -287,14 +290,25 @@ function createBubble() {
   })
 }
 
+/** 말풍선을 보여 주고 바로 입력할 수 있게 한다. */
+function focusBubble() {
+  if (!bubbleWin) return
+  // macOS: Dock 아이콘 없이 사는 앱이라, 앱을 앞으로 가져와야 입력 칸에 글자가 들어간다.
+  if (process.platform === 'darwin') app.focus({ steal: true })
+  bubbleWin.show()
+  bubbleWin.focus()
+  bubbleWin.webContents.focus()
+}
+
 function setChatOpen(on) {
   on = !!on && store.get().chatEnabled
   if (on) {
     expanded = true
     bubbleClosing = false
+    focusChatUntil = Date.now() + 2000
     createBubble()
     placeBubble()
-    if (wantVisible() && !bubbleWin.webContents.isLoading()) { bubbleWin.show(); bubbleWin.focus() }
+    if (wantVisible() && !bubbleWin.webContents.isLoading()) focusBubble()
   } else {
     if (!expanded && !bubbleClosing) return
     expanded = false
@@ -392,6 +406,7 @@ function startTracker() {
     taskbar: store.get().showInDock,
     pid: process.pid,
     dir: app.getPath('userData'),
+    wantsFocus: () => expanded && Date.now() < focusChatUntil,
     hitRect: () => {
       // 창 관리자 단위로: Electron 단위 = 창 관리자 단위 × wmScale
       const st = lastLayout?.stage
@@ -737,7 +752,7 @@ function menuTemplate() {
   const canAttach = !!trackers.pick() && !trackError
   return [
     { label: '설정…', click: openSettings },
-    ...(update.state === 'available' ? [{ label: `${update.version} 판으로 업데이트`, click: () => installUpdate() }] : []),
+    ...(update.state === 'available' ? [{ label: `${update.version} 버전으로 업데이트`, click: () => installUpdate() }] : []),
     { type: 'separator' },
     {
       label: '고정 모드',
@@ -977,14 +992,14 @@ async function checkForUpdate(manual) {
   scheduleUpdateCheck()
 }
 
-/** 새 판마다 한 번만 알린다. */
+/** 새 버전마다 한 번만 알린다. */
 function announceUpdate() {
   if (store.get().updateNotified === update.version) return
   store.set({ updateNotified: update.version })
   if (!Notification.isSupported()) return
   const note = new Notification({
     title: '클로',
-    body: canSelfUpdate() ? `새 판 ${update.version}이 나왔어요. 누르면 바로 바꿔요.` : `새 판 ${update.version}이 나왔어요.`,
+    body: canSelfUpdate() ? `새 버전 ${update.version}이 나왔어요. 누르면 바로 바꿔요.` : `새 버전 ${update.version}이 나왔어요.`,
     icon: path.join(ASSETS, 'icon.png'),
     silent: true,
   })
@@ -1181,6 +1196,13 @@ function wireIpc() {
     const meta = store.get()[`${kind}SoundFile`]
     const bytes = await soundFiles.readFile(meta, app.getPath('userData'))
     return { id: meta.id, bytes }
+  })
+  const builtinSounds = require('./sound').BUILTIN
+  const builtinCache = new Map()
+  ipcMain.handle('sound:builtin', (_e, name) => {
+    if (!Object.hasOwn(builtinSounds, name)) throw new Error('알 수 없는 효과음이에요.')
+    if (!builtinCache.has(name)) builtinCache.set(name, fs.readFileSync(path.join(ASSETS, 'sounds', builtinSounds[name])))
+    return builtinCache.get(name)
   })
   ipcMain.on('sound:error', (_e, info) => {
     if (!info || !['petting', 'talking'].includes(info.kind) || typeof info.message !== 'string') return
@@ -1417,9 +1439,22 @@ async function selfTest(dir) {
   await settingsJs('saveQueue')
   check(store.get().providers.map(p => p.id).join() === 'claude,codex,groq' && store.get().chatProvider === 'claude', 'Dragging a provider to the top makes it answer first')
   check(await settingsJs('!el("providerList").querySelector(".pitem.dragging") && el("claudeBody").hidden'), 'Finishing a drag neither leaves a lifted row nor opens its settings')
-  await settingsJs('el("providerList").querySelector("[data-id=codex] .pitem-open").click()')
-  await wait(60)
-  check(await settingsJs('!el("codexBody").hidden && el("codexBody").contains(el("codexModelPick"))'), 'Pressing a provider opens that provider\'s own settings')
+  // 진짜 마우스로 누른다(코드로 click()을 부르면 포인터 붙잡기 문제를 놓친다).
+  const realClick = async selector => {
+    const p = await settingsJs(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: Math.round(r.left + Math.min(r.width / 2, 40)), y: Math.round(r.top + r.height / 2) } })()`)
+    settingsWin.webContents.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y })
+    settingsWin.webContents.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 })
+    await wait(30)
+    settingsWin.webContents.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 })
+    await wait(120)
+  }
+  await realClick('[data-id=codex] .pitem-open')
+  check(await settingsJs('!el("codexBody").hidden && el("codexBody").contains(el("codexModelPick"))'), 'Clicking a provider row with the mouse opens its own settings')
+  await realClick('#codexModelPick .picker-button')
+  check(await settingsJs('!el("codexModelPick").querySelector(".picker-menu").hidden'), 'Clicking a model picker with the mouse opens the model list')
+  await realClick('[data-id=codex] .pitem-open')
+  check(await settingsJs('el("codexBody").hidden'), 'Clicking the row again folds its settings')
+  await realClick('[data-id=codex] .pitem-open')
   // 모델 고르기: 받아 온 목록이 그대로 보이고, 누르면 저장된다.
   await settingsJs(`lists.codex={models:[{id:'gpt-test-a',label:'GPT Test A',note:'first'},{id:'gpt-test-b',label:'GPT Test B',note:'second'}],source:'account'};lists.groq={models:[{id:'openai/gpt-oss-120b',label:'gpt-oss-120b',note:'OpenAI'},{id:'test/groq-b',label:'groq-b',note:'Test'}],source:'account'};renderModels()`)
   check(await settingsJs('el("codexModelPick").querySelectorAll(".picker-item").length === 3 && el("groqModelPick").querySelectorAll(".picker-item").length === 2 && el("modelPick").querySelectorAll(".picker-item").length === info.models.length + 1'), 'Every provider shows a populated model list')
@@ -1472,6 +1507,8 @@ async function selfTest(dir) {
     check(groqCredential.info().configured && !JSON.stringify(settingsInfo()).includes('gsk_mock'), 'Groq key IPC exposes status without returning secret')
     check(!fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8').includes('gsk_mock'), 'Groq key is never saved in general settings')
   } finally { dialog.showOpenDialog = originalDialog }
+  // 앱에 든 녹음 소리가 실제로 풀린다(쓰다듬기 꺅, 글자마다 말소리, 채팅 소리).
+  check(await settingsJs(`(async () => { const s = ClauSound.create(); s.configure({ ...info.cfg, pettingSound: 'squee', talkingSound: 'blip', soundEnabled: true, soundVolume: 30 }); await s.prepare('petting'); await s.prepare('talking'); await s.preview('chatResult'); for (let i = 0; i < 3; i++) await s.preview('petting'); const v = s.voices(); s.dispose(); return v.petting === 3 && v.chat === 1 })()`), 'Bundled recordings decode and rapid petting sounds overlap')
   await settingsJs('showTab("react")')
   await shot('settings-custom-sound', settingsWin)
   settingsWin.close()
@@ -1510,6 +1547,11 @@ async function selfTest(dir) {
     check(nativeEvents.length === 0 && !bubbleWin.isVisible(), `${label} open/close never moves, resizes, hides or shows character`)
   }
 
+  // 대답은 한 글자씩 나타나므로 다 나타날 때까지 기다린다.
+  const answerReady = async text => {
+    for (let i = 0; i < 100 && await bjs(`answer.textContent !== ${JSON.stringify(text)}`); i++) await wait(30)
+    return bjs(`answer.textContent === ${JSON.stringify(text)}`)
+  }
   if (process.env.CLAU_TEST_CLI) {
     applySettings({ codexPath: process.env.CLAU_TEST_CLI, claudePath: process.env.CLAU_TEST_CLI, historyTurns: 8 })
     for (const provider of ['claude', 'codex']) {
@@ -1533,7 +1575,7 @@ async function selfTest(dir) {
       }
       for (const [event, listener] of listeners) win.removeListener(event, listener)
       check(nativeEvents.length === 0, `${provider} send/response never changes character native surface`)
-      check(await bjs(`!busy && answer.textContent === ${JSON.stringify('Hello from ')} + ${JSON.stringify(provider)}`), `${provider} completes renderer to CLI chat`)
+      check(await answerReady(`Hello from ${provider}`) && await bjs('!busy'), `${provider} completes renderer to CLI chat`)
       await shot(`chat-${provider}`)
       await shot(`bubble-${provider}`, bubbleWin)
     }
@@ -1542,7 +1584,7 @@ async function selfTest(dir) {
     await wait(80)
     await bjs('input.value="force fallback";form.requestSubmit()')
     for (let i = 0; i < 100 && await bjs('busy'); i++) await wait(50)
-    check(await bjs('answer.textContent === "Hello from codex" && providerState.provider === "codex" && providerState.fallback'), 'Claude quota failure automatically completes through Codex')
+    check(await answerReady('Hello from codex') && await bjs('providerState.provider === "codex" && providerState.fallback'), 'Claude quota failure automatically completes through Codex')
     const originalFetch = globalThis.fetch
     globalThis.fetch = async () => new Response('data: '+JSON.stringify({choices:[{delta:{content:'Hello from groq'},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
     try {
@@ -1551,7 +1593,7 @@ async function selfTest(dir) {
       await wait(80)
       await bjs('input.value="force groq";form.requestSubmit()')
       for (let i = 0; i < 100 && await bjs('busy'); i++) await wait(50)
-      check(await bjs('answer.textContent === "Hello from groq" && providerState.provider === "groq"'), 'Both unavailable CLIs automatically complete through Groq streaming')
+      check(await answerReady('Hello from groq') && await bjs('providerState.provider === "groq"'), 'Both unavailable CLIs automatically complete through Groq streaming')
       await shot('bubble-groq', bubbleWin)
     } finally { globalThis.fetch = originalFetch }
     await bjs('input.value="cancel me"; form.requestSubmit()')
@@ -1594,7 +1636,7 @@ async function selfTest(dir) {
  *   clau            설정 창 열기 (고정 모드에서 손이 닿지 않을 때의 비상구이기도 하다)
  *   clau --hello    인사만 (Claude Code가 깨울 때)
  *   clau --unlock   고정 모드 끄기
- *   clau --update   새 판이 있으면 받아서 바꾸기
+ *   clau --update   새 버전이 있으면 받아서 바꾸기
  *   clau --quit     끄기
  * 처음 켤 때 --settings 를 붙이면 설정 창도 같이 열린다.
  */
@@ -1631,7 +1673,7 @@ if (!app.requestSingleInstanceLock()) {
     watchState()
     if (!TESTING) {
       writeAppInfo()
-      // 연결해 둔 mod는 앱과 같은 판으로 맞춰 둔다.
+      // 연결해 둔 mod는 앱과 같은 버전으로 맞춰 둔다.
       try {
         if (modConnected()) copyMod()
       } catch {}

@@ -50,7 +50,7 @@ async function codex({ bin, home = os.homedir(), env = process.env, readFile = f
     const models = codexList(JSON.parse(await readFile(file, 'utf8')))
     if (models.length) return { models, source: 'account' }
   } catch {
-    // 아직 한 번도 안 썼거나 다른 판의 파일: CLI에 직접 묻는다.
+    // 아직 한 번도 안 썼거나 다른 버전의 파일: CLI에 직접 묻는다.
   }
   if (!bin) return { models: [], source: 'none', error: 'codex 명령을 찾지 못했어요.' }
   try {

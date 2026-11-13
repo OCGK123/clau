@@ -1,8 +1,8 @@
 #!/bin/sh
 # 클로 한 줄 설치 (Linux, macOS)
 #   curl -fsSL https://raw.githubusercontent.com/OCGK123/clau/main/install.sh | sh
-# GitHub 릴리스에서 이 컴퓨터에 맞는 최신 판을 받아, 올라온 sha256과 맞는지 본 뒤 설치하고 켠다.
-# 이미 깔려 있으면 새 판으로 바꾼다. 설정은 그대로 남는다.
+# GitHub 릴리스에서 이 컴퓨터에 맞는 최신 버전을 받아, 올라온 sha256과 맞는지 본 뒤 설치하고 켠다.
+# 이미 깔려 있으면 새 버전으로 바꾼다. 설정은 그대로 남는다.
 set -eu
 
 REPO="${CLAU_REPO:-OCGK123/clau}"
@@ -38,7 +38,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
 name="Clau-$target.zip"
-say "클로 최신 판을 찾는 중…"
+say "클로 최신 버전을 찾는 중…"
 peek "$BASE/latest.json" > "$work/latest.json" || die "릴리스 정보를 받지 못했어요. 인터넷 연결을 확인해 주세요."
 version=$(sed -n 's/.*"version" *: *"\([0-9.]*\)".*/\1/p' "$work/latest.json" | head -n 1)
 # latest.json 에서 이 파일의 sha256 만 골라낸다(한 줄짜리 JSON이어도 된다).

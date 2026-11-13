@@ -32,6 +32,19 @@
   function isPet(w) {
     return ours(w) && String(w.caption) === 'Clau'
   }
+  // 클로의 다른 창(말풍선). 설정 창은 보통 창이라 건드리지 않는다.
+  function isHelper(w) {
+    return ours(w) && !isPet(w) && String(w.caption) !== '클로 설정'
+  }
+  function quiet(w) {
+    // 창 전환기·페이저·작업 표시줄에서 빼고, 창 관리자가 그리는 테두리나 주목 표시가 붙지 않게 한다.
+    try {
+      w.skipSwitcher = true
+      w.skipPager = true
+      w.noBorder = true
+      if (w.demandsAttention) w.demandsAttention = false
+    } catch (e) {}
+  }
   function rect(w) {
     var g = w.frameGeometry
     return [Math.round(g.x), Math.round(g.y), Math.round(g.width), Math.round(g.height)]
@@ -98,14 +111,14 @@
   }
 
   var watched = []
+  var helpers = []
   function adopt(w) {
     if (isPet(w)) {
       if (pet === w) return // Activating Clau must not add duplicate geometry listeners.
       pet = w
       // Claude 창의 일부처럼 보이도록 창 전환기(Alt+Tab)와 페이저에서 뺀다. 작업 표시줄은 설정을 따른다.
+      quiet(w)
       try {
-        w.skipSwitcher = true
-        w.skipPager = true
         w.skipTaskbar = !IN_TASKBAR
       } catch (e) {}
       w.frameGeometryChanged.connect(function () {
@@ -113,6 +126,20 @@
         report()
       })
       refreshHit()
+    } else if (isHelper(w)) {
+      quiet(w)
+      try {
+        w.skipTaskbar = true
+      } catch (e) {}
+      if (helpers.indexOf(w) === -1) {
+        helpers.push(w)
+        if (w.demandsAttentionChanged) w.demandsAttentionChanged.connect(function () { quiet(w) })
+      }
+      // 사용자가 클로를 눌러 말풍선을 연 순간이면 바로 입력할 수 있게 앞으로 가져온다.
+      // (KDE의 포커스 가로채기 방지는 앱이 스스로 창을 앞으로 가져오는 것을 막는다.)
+      callDBus(SERVICE, '/Tracker', 'local.clau.Tracker', 'WantsFocus', function (yes) {
+        if (yes && w !== active()) workspace.activeWindow = w
+      })
     } else if (isTarget(w)) {
       if (watched.indexOf(w) === -1) {
         watched.push(w)
@@ -125,6 +152,8 @@
     var i = watched.indexOf(w)
     if (i !== -1) watched.splice(i, 1)
     if (w === pet) pet = null
+    var h = helpers.indexOf(w)
+    if (h !== -1) helpers.splice(h, 1)
     if (w === target) target = watched.length ? watched[watched.length - 1] : null
     report()
   }

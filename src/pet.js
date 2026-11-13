@@ -11,8 +11,7 @@ const input = el('q')
 const sendBtn = el('send')
 const cancelBtn = el('cancel')
 const closeBtn = el('closeBubble')
-const sound = window.PetSound.create()
-const files = window.ChatSound.create() // 녹음 효과음: 꺅(쓰다듬기 선택 시), 대답을 마치고 신날 때
+const sound = window.ClauSound.create() // 쓰다듬기, Claude Code를 따라 말할 때, 대답을 마치고 신날 때
 const moverEl = el('mover')
 const spinner = el('spinner')
 
@@ -319,7 +318,8 @@ function flap(open) {
   open = Math.random() < 0.8 ? !open : open
   petEl.dataset.mouth = open ? 'open' : 'closed'
   if (open) play(imgs.mouth_open, [{ transform: 'scale(0.82, 0.55)' }, { transform: 'scale(1, 1)' }], 80)
-  if (open && (bubbleOpen || local !== 'talking')) sound.talk()
+  // 말풍선 대답은 글자마다 말풍선이 소리를 낸다. 여기서는 Claude Code를 따라 말할 때만.
+  if (open && !bubbleOpen && local !== 'talking') sound.talk()
   let ms = open ? rand(90, 260) : rand(70, 220)
   if (!open && Math.random() < 0.1) ms = rand(350, 700)
   flapTimer = setTimeout(() => flap(open), ms)
@@ -458,8 +458,7 @@ function pat(e) {
   startPetting()
   window.PetAnimator.restart() // 연타할 때마다 말랑 동작이 처음부터 다시
   if (e) window.PetFx.burst(e.clientX, e.clientY, 'sparkle', 3, 0.8)
-  if (cfg.pettingSound === 'squee') files.play('squee')
-  else sound.pat(pats)
+  sound.pat() // 연타하면 소리가 끊기지 않고 겹친다
   boing(0.055 + 0.05 * (Math.min(pats, 8) / 8))
   play(imgs.eyes_petted, [{ transform: 'scale(1.1, 0.72)' }, { transform: 'scale(0.96, 1.1)', offset: 0.5 }, { transform: 'scale(1, 1)' }], 260)
   heart()
@@ -566,7 +565,6 @@ function finish(stopAll = false) {
   sendBtn.disabled = false
   cancelBtn.hidden = true
   if (stopAll) sound.stop()
-  else sound.stopSynth?.()
   touch()
 }
 
@@ -588,11 +586,10 @@ window.pet.onDone(text => {
   const remaining = Math.max(0, Math.min(1500, Math.max(500, Array.from(text).length * 25)) - spokenFor)
   if (remaining > 0 && bubbleOpen && visible && cfg.chatEnabled !== false) {
     setLocal('talking', remaining, 'happy')
-    sound.talk()
-    happyTimer = setTimeout(() => files.play('chatHappy'), remaining) // 말하기가 끝나고 ^^ 폴짝할 때
+    happyTimer = setTimeout(() => sound.play('chatHappy'), remaining) // 말하기가 끝나고 ^^ 폴짝할 때
   } else {
     setLocal('happy', HAPPY_MS)
-    files.play('chatHappy')
+    sound.play('chatHappy')
   }
 })
 window.pet.onError(message => {
@@ -780,7 +777,7 @@ stage.addEventListener('pointermove', e => {
     if (e.timeStamp - lastRub > 320) {
       lastRub = e.timeStamp
       heart()
-      if (cfg.pettingSound !== 'squee') sound.pat(pats)
+      sound.pat()
     }
     return
   }
@@ -905,7 +902,6 @@ function syncVisibility() {
   visible = next
   document.body.classList.toggle('is-hidden', !visible)
   sound.setVisible(visible)
-  files.setVisible(visible)
   window.PetAnimator.setPaused(!visible)
   if (!visible) {
     clearTimeout(stateTimer)
@@ -933,7 +929,6 @@ window.pet.onCfg(next => {
   const chainChanged = before && String(before.chatChain) !== String(cfg.chatChain)
   if ((cfg.chatChain?.length > 1 && chainChanged) || (before && cfg.chatProvider !== before.chatProvider)) limitUntil = 0
   sound.configure(cfg)
-  files.configure(cfg)
   if (chainChanged) sound.stop()
   if (down && (cfg.locked || cfg.dragEnabled === false || (down.head && !cfg.petting))) release({ type: 'settings' })
   if (cfg.reduceMotion || cfg.dragPhysics === false) stopHeldMotion()
@@ -951,7 +946,6 @@ window.pet.onClaudeCode(state => {
 window.pet.init().then(init => {
   cfg = init.cfg
   sound.configure(cfg)
-  files.configure(cfg)
   layers = init.layers
   bust = init.bust
   cc = init.ccState

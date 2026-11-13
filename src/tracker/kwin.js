@@ -6,7 +6,7 @@ const path = require('node:path')
 
 let serial = 0
 
-function start({ target, taskbar, pid, dir, onState, onFail, hitRect }) {
+function start({ target, taskbar, pid, dir, onState, onFail, hitRect, wantsFocus }) {
   let dbus
   try {
     dbus = require('dbus-next')
@@ -53,8 +53,12 @@ function start({ target, taskbar, pid, dir, onState, onFail, hitRect }) {
     HitRect() {
       try { return String(hitRect?.() || '') } catch { return '' }
     }
+    /** 방금 사용자가 말풍선을 열었는가: 그렇다면 스크립트가 말풍선 창을 앞으로 가져온다. */
+    WantsFocus() {
+      try { return !!wantsFocus?.() } catch { return false }
+    }
   }
-  Tracker.configureMembers({ methods: { Update: { inSignature: 's', outSignature: '' }, HitRect: { inSignature: '', outSignature: 's' } } })
+  Tracker.configureMembers({ methods: { Update: { inSignature: 's', outSignature: '' }, HitRect: { inSignature: '', outSignature: 's' }, WantsFocus: { inSignature: '', outSignature: 'b' } } })
 
   ;(async () => {
     await bus.requestName(service, 0)

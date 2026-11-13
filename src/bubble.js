@@ -9,7 +9,8 @@ const input = el('q')
 const send = el('send')
 const cancel = el('cancel')
 const close = el('closeBubble')
-const sound = window.ChatSound.create({ base: '../assets/sounds/' })
+const sound = window.ClauSound.create()
+const REVEAL_CPS = 38 // 대답 글자가 나타나는 빠르기(글자/초). 밀린 글자가 많으면 더 빨리 따라잡는다.
 const HINT = '안녕, 나 클로야! 뭐든 물어봐.'
 const OPEN_MS = 460 // bubble.css bubble-in 길이와 맞춘다
 const CLOSE_MS = 240 // bubble.css bubble-out 길이와 맞춘다
@@ -22,8 +23,7 @@ let shown = document.visibilityState !== 'hidden'
 let busy = false
 let phase = 'closed' // 'opening' | 'open' | 'closing' | 'closed'
 let phaseTimer = null
-let textFrame = null
-let pendingText = null
+let reveal = { chars: [], count: 0, frame: null, last: 0, carry: 0 } // 한 글자씩 나타내기
 let autoTimer = null
 let lastTouch = Date.now()
 let limitUntil = 0
@@ -99,23 +99,56 @@ function scheduleClose() {
 function touch() { lastTouch = Date.now(); if (!busy) scheduleClose() }
 function requestClose() { if (open) window.pet.expand(false) }
 function clearPendingText() {
-  if (textFrame !== null) cancelAnimationFrame(textFrame)
-  textFrame = null
-  pendingText = null
+  if (reveal.frame !== null) cancelAnimationFrame(reveal.frame)
+  reveal.frame = null
 }
+/** 바로 보여 준다(안내, 오류). 소리는 내지 않는다. */
 function showText(text, hint = false) {
   clearPendingText()
+  reveal.chars = Array.from(text)
+  reveal.count = reveal.chars.length
   answer.classList.toggle('hint', hint)
   answer.textContent = text
   answer.scrollTop = answer.scrollHeight
 }
-function queueText(text) {
-  pendingText = text
-  if (!shown || textFrame !== null) return
-  textFrame = requestAnimationFrame(() => {
-    textFrame = null
-    if (pendingText !== null) showText(pendingText)
-  })
+/** 대답은 한 글자씩 나타나고, 글자마다 말소리가 난다(빠르게 이어지면 소리가 겹친다). */
+function revealTo(text) {
+  const chars = Array.from(text)
+  // 앞서 보인 글자가 새 글자의 앞부분이 아니면(다른 서비스로 넘어가 새로 시작) 처음부터.
+  const prefix = reveal.chars.slice(0, reveal.count)
+  if (prefix.length > chars.length || prefix.some((c, i) => chars[i] !== c)) reveal.count = 0
+  reveal.chars = chars
+  answer.classList.remove('hint')
+  if (!shown) return finishReveal()
+  if (reveal.count === 0) answer.textContent = '' // 기다리는 점(…)을 걷어 낸다
+  if (reveal.frame === null) {
+    reveal.last = performance.now()
+    reveal.carry = 0
+    reveal.frame = requestAnimationFrame(stepReveal)
+  }
+}
+function stepReveal(at) {
+  reveal.frame = null
+  const backlog = reveal.chars.length - reveal.count
+  if (backlog <= 0) return
+  reveal.carry += ((at - reveal.last) / 1000) * Math.max(REVEAL_CPS, backlog / 1.5)
+  reveal.last = at
+  const n = Math.min(backlog, Math.floor(reveal.carry))
+  if (n > 0) {
+    reveal.carry -= n
+    const added = reveal.chars.slice(reveal.count, reveal.count + n)
+    reveal.count += n
+    answer.textContent = reveal.chars.slice(0, reveal.count).join('')
+    answer.scrollTop = answer.scrollHeight
+    if (added.some(c => /\S/.test(c))) sound.talk()
+  }
+  reveal.frame = requestAnimationFrame(stepReveal)
+}
+function finishReveal() {
+  clearPendingText()
+  reveal.count = reveal.chars.length
+  answer.textContent = reveal.chars.join('')
+  answer.scrollTop = answer.scrollHeight
 }
 function setBusy(next) {
   busy = next
@@ -126,6 +159,8 @@ function setBusy(next) {
 }
 function waiting() {
   clearPendingText()
+  reveal.chars = []
+  reveal.count = 0
   answer.classList.remove('hint')
   answer.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>'
 }
@@ -190,10 +225,16 @@ function markReplied() {
   replied = true
   sound.play('chatResult')
 }
-window.pet.onDelta(text => { if (busy) { markReplied(); queueText(text); touch() } })
+window.pet.onDelta(text => {
+  if (!busy) return
+  if (!text) { waiting(); return } // 다른 서비스로 넘어가며 앞의 대답을 버렸다
+  markReplied()
+  revealTo(text)
+  touch()
+})
 window.pet.onDone(text => {
   markReplied() // 글자가 흘러나오지 않고 한 번에 와도 한 번은 울린다
-  showText(text)
+  revealTo(text)
   setBusy(false)
   touch()
 })
@@ -233,10 +274,9 @@ document.addEventListener('visibilitychange', () => {
     if (phase === 'closing') finishClose()
     clearTimeout(autoTimer)
     autoTimer = null
-    if (textFrame !== null) cancelAnimationFrame(textFrame)
-    textFrame = null
+    finishReveal()
+    sound.stopTalk()
   } else {
-    if (pendingText !== null) showText(pendingText)
     if (open) animate(1)
     scheduleClose()
   }

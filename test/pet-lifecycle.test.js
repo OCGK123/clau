@@ -55,11 +55,11 @@ async function renderer() {
     expand: value => expansions.push(value), ask() {}, cancel() {}, menu() {}, drag() {},
   }
   for (const name of ['Cfg', 'Input', 'Hello', 'ClaudeCode', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Layout', 'Visibility', 'ChatVisibility', 'ChatStarted', 'ChatCancelled', 'ChatProvider']) pet[`on${name}`] = fn => { callbacks[name] = fn }
-  const audio = { configure() {}, unlock() {}, pat() {}, talk() {}, stop() { audioStops.push('all') }, stopSynth() { audioStops.push('synth') }, dispose() {}, setVisible: value => audioVisibility.push(value) }
+  const files = { played: [] }
+  const audio = { pats: 0, talks: 0, configure() {}, unlock() {}, pat() { audio.pats++ }, talk() { audio.talks++ }, play: name => files.played.push(name), stop() { audioStops.push('all') }, stopTalk() { audioStops.push('talk') }, dispose() {}, setVisible: value => audioVisibility.push(value) }
   // 몸짓 엔진·이펙트·녹음 효과음은 각자 테스트가 따로 있다. 여기서는 호출 기록만 남긴다.
   const animator = { modes: [], paused: [], attach() {}, setUnit() {}, setCalm() {}, setMode: value => animator.modes.push(value), setPaused: value => animator.paused.push(value), restart() {}, bounce() {}, untilSquishEnd: () => 0 }
-  const files = { played: [], configure() {}, setVisible() {}, play: name => files.played.push(name), stop() {} }
-  const window = { pet, PetMotion: require('../src/pet-motion'), PetSound: { create: () => audio }, PetAnimator: animator, PetFx: { attach() {}, setOff() {}, burst() {} }, ChatSound: { create: () => files }, addEventListener() {} }
+  const window = { pet, PetMotion: require('../src/pet-motion'), ClauSound: { create: () => audio }, PetAnimator: animator, PetFx: { attach() {}, setOff() {}, burst() {} }, addEventListener() {} }
   class ClockDate extends Date { static now() { return now } }
   const context = vm.createContext({ window, document, Date: ClockDate, performance: { now: () => now },
     setTimeout: (fn, ms) => { const key = ++id; timers.set(key, { at: now + ms, fn }); return key }, clearTimeout: key => timers.delete(key),
@@ -82,7 +82,7 @@ async function renderer() {
   }
   function frame() { for (const [key, fn] of [...frames]) { frames.delete(key); fn(now) } }
   const geometry = { stage: { left: 78, top: 222, width: 184, height: 220, anchorX: 0.5, anchorY: 1 }, bubble: { left: 0, top: 0, width: 340, height: 210, originX: 170, originY: 210 } }
-  return { evaluate, advance, frame, callbacks, elements, timers, frames, expansions, audioVisibility, audioStops, geometry, animator, files }
+  return { evaluate, advance, frame, callbacks, elements, timers, frames, expansions, audioVisibility, audioStops, geometry, animator, files, audio }
 }
 
 test('idle uses only state deadlines, and hiding suspends every renderer timer and frame', async () => {
@@ -215,13 +215,13 @@ test('adding any fallback to the answer order clears a previously stored Claude 
 })
 
 
-test('successful chat completion keeps custom one-shots, while cancel and clear stop all voices', async () => {
+test('a finished answer lets its sounds ring out, while cancel and clear stop all voices', async () => {
   const r = await renderer()
   r.callbacks.ChatVisibility({ open: true })
   r.callbacks.ChatStarted()
   r.callbacks.Delta('응답')
   r.callbacks.Done('응답')
-  assert.equal(r.audioStops.at(-1), 'synth')
+  assert.equal(r.audioStops.length, 0)
   r.callbacks.ChatStarted()
   r.callbacks.ChatCancelled()
   assert.equal(r.audioStops.at(-1), 'all')
@@ -278,4 +278,15 @@ test('dropping a tilted pet ends the drag at once and swings back to upright wit
   assert.equal(r.evaluate('bodyEl.style.transform'), undefined)
   r.evaluate('finishSettle(); finishSettle()')
   assert.equal(r.evaluate('JSON.stringify(globalThis.__drags)'), '["end"]', 'no duplicate drag end')
+})
+
+test('rapid pats each play a petting sound, and the pet never talks over the chat bubble', async () => {
+  const r = await renderer()
+  r.evaluate('pat(); pat(); pat(); pat()')
+  assert.equal(r.audio.pats, 4)
+  r.callbacks.ChatVisibility({ open: true })
+  r.callbacks.ChatStarted()
+  r.callbacks.Delta('글자마다 소리는 말풍선이 낸다')
+  r.advance(3000)
+  assert.equal(r.audio.talks, 0)
 })

@@ -70,8 +70,8 @@ const DEFAULTS = {
   swingStyle: 'natural', // 'natural' 적당히 흔들림 | 'spin' 세게 흔들면 빙글빙글 여러 바퀴
   soundEnabled: true, // 처음부터 켜짐(병합 때 합의)
   soundVolume: 35,
-  pettingSound: 'squee', // 머리를 누르면 꺅
-  talkingSound: 'soft',
+  pettingSound: 'squee', // 머리를 누르면 꺅(앱에 든 녹음)
+  talkingSound: 'blip', // 대답 글자마다 나는 말소리(앱에 든 녹음)
   pettingSoundFile: null,
   talkingSoundFile: null,
   chatSound: true, // 말풍선 열기·닫기·보내기·대답·신남 효과음(효과음 켜기가 켜져 있을 때)
@@ -87,8 +87,8 @@ const DEFAULTS = {
   showInDock: false, // Dock(macOS)이나 작업 표시줄에 아이콘 보이기
   autostart: false, // 로그인할 때 자동 실행
   wakeWithClaude: true, // Claude Code를 열면 같이 깨우기(연결돼 있을 때)
-  updateCheck: true, // 새 판이 나왔는지 가끔 살피기
-  updateNotified: '', // 이미 알린 판 번호
+  updateCheck: true, // 새 버전이 나왔는지 가끔 살피기
+  updateNotified: '', // 이미 알린 버전 번호
 }
 
 let file = null
@@ -170,9 +170,10 @@ function normalize(raw) {
   }
   next.dozeMinutes = clampInt(next.dozeMinutes, 0, 120, DEFAULTS.dozeMinutes)
   next.soundVolume = clampInt(next.soundVolume, 0, 100, DEFAULTS.soundVolume)
-  next.pettingSound = pick(next.pettingSound, ['none', 'chime', 'pop', 'squee', 'custom'], DEFAULTS.pettingSound)
+  // 예전의 합성음(종소리·톡톡·작은 말소리·타닥타닥)은 없앴다. 고르던 사람은 앱에 든 녹음으로 옮긴다.
+  next.pettingSound = pick(next.pettingSound, ['none', 'squee', 'custom'], DEFAULTS.pettingSound)
   next.swingStyle = pick(next.swingStyle, ['natural', 'spin'], DEFAULTS.swingStyle)
-  next.talkingSound = pick(next.talkingSound, ['none', 'soft', 'type', 'custom'], DEFAULTS.talkingSound)
+  next.talkingSound = pick(next.talkingSound, ['none', 'blip', 'custom'], DEFAULTS.talkingSound)
   for (const kind of ['petting', 'talking']) {
     const meta = next[`${kind}SoundFile`]
     next[`${kind}SoundFile`] = meta && typeof meta === 'object' && typeof meta.id === 'string'

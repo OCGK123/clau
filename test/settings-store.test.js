@@ -61,7 +61,7 @@ test('new provider, app identity, sound presets, and volume reject malformed sav
   assert.equal(cfg.codexModel,'')
   assert.equal(cfg.soundVolume,100)
   assert.equal(cfg.pettingSound,'squee')
-  assert.equal(cfg.talkingSound,'soft')
+  assert.equal(cfg.talkingSound,'blip')
   assert.equal(cfg.targetAppSelection,null)
   cfg = store.set({soundVolume:-10,targetAppSelection:{kind:'unknown',id:'code'}})
   assert.equal(cfg.soundVolume,0)
@@ -119,4 +119,11 @@ test('0.5.0 preserves custom sound metadata and fallback preferences but strips 
   assert.equal(cfg.groqFallbackEnabled,true)
   assert.ok(!fs.readFileSync(path.join(dir,'settings.json'),'utf8').includes('never-save-this'))
   assert.equal(store.set({pettingSoundFile:{id:'../stolen.wav',name:'bad'}}).pettingSoundFile,null)
+})
+
+test('old synthesized sound choices move to the bundled recordings', () => {
+  const cfg = require('../src/settings-store').normalize({ pettingSound: 'chime', talkingSound: 'type' })
+  assert.equal(cfg.pettingSound, 'squee')
+  assert.equal(cfg.talkingSound, 'blip')
+  assert.equal(require('../src/settings-store').normalize({ pettingSound: 'custom', talkingSound: 'none' }).talkingSound, 'none')
 })

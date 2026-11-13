@@ -1,7 +1,7 @@
 # 클로 한 줄 설치 (Windows)
 #   irm https://raw.githubusercontent.com/OCGK123/clau/main/install.ps1 | iex
-# GitHub 릴리스에서 최신 판을 받아, 올라온 sha256과 맞는지 본 뒤 %LOCALAPPDATA%\Clau 에 설치하고 켠다.
-# 이미 깔려 있으면 새 판으로 바꾼다. 설정은 그대로 남는다. 관리자 권한은 필요 없다.
+# GitHub 릴리스에서 최신 버전을 받아, 올라온 sha256과 맞는지 본 뒤 %LOCALAPPDATA%\Clau 에 설치하고 켠다.
+# 이미 깔려 있으면 새 버전으로 바꾼다. 설정은 그대로 남는다. 관리자 권한은 필요 없다.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # 진행 막대가 내려받기를 크게 느리게 만든다
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -14,7 +14,7 @@ if (-not [Environment]::Is64BitOperatingSystem) { throw '64비트 Windows에서�
 $work = Join-Path ([IO.Path]::GetTempPath()) ("clau-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
-  Write-Host '클로 최신 판을 찾는 중…'
+  Write-Host '클로 최신 버전을 찾는 중…'
   $latest = Invoke-RestMethod "$base/latest.json"
   $file = $latest.files.$name
   if (-not $file) { throw "릴리스에 $name 이 없어요." }

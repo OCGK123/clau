@@ -241,7 +241,7 @@
         </div>
         <div class="row">
           <label for="pettingSound">쓰다듬을 때</label>
-          <div class="control-pair"><select id="pettingSound" data-key="pettingSound"><option value="chime">맑은 종소리</option><option value="pop">톡톡</option><option value="squee">꺅 (깜짝 놀람)</option><option value="custom">직접 고른 파일</option><option value="none">소리 없음</option></select><button type="button" id="previewPetting" aria-label="쓰다듬기 소리 미리 듣기">듣기</button></div>
+          <div class="control-pair"><select id="pettingSound" data-key="pettingSound"><option value="squee">꺅</option><option value="custom">직접 고른 파일</option><option value="none">소리 없음</option></select><button type="button" id="previewPetting" aria-label="쓰다듬기 소리 미리 듣기">듣기</button></div>
         </div>
         <div class="row stack sound-file-row">
           <div class="head"><span id="pettingFileName" class="file-name"></span><button type="button" id="choosePettingSound">파일 고르기</button></div>
@@ -249,11 +249,11 @@
         </div>
         <div class="row">
           <label for="talkingSound">말할 때</label>
-          <div class="control-pair"><select id="talkingSound" data-key="talkingSound"><option value="soft">작은 말소리</option><option value="type">타닥타닥</option><option value="custom">직접 고른 파일</option><option value="none">소리 없음</option></select><button type="button" id="previewTalking" aria-label="말하기 소리 미리 듣기">듣기</button></div>
+          <div class="control-pair"><select id="talkingSound" data-key="talkingSound"><option value="blip">톡톡 (글자마다)</option><option value="custom">직접 고른 파일</option><option value="none">소리 없음</option></select><button type="button" id="previewTalking" aria-label="말하기 소리 미리 듣기">듣기</button></div>
         </div>
         <div class="row stack sound-file-row">
           <div class="head"><span id="talkingFileName" class="file-name"></span><button type="button" id="chooseTalkingSound">파일 고르기</button></div>
-          <p id="talkingFileStatus" class="status" role="status">짧은 소리를 고르면 말할 때 겹치지 않고 재생해요.</p>
+          <p id="talkingFileStatus" class="status" role="status"></p>
         </div>
         <div class="row">
           <label for="chatSound">채팅 효과음</label>
@@ -295,7 +295,7 @@
         </div>
         <progress id="updateProgress" max="100" value="0" hidden></progress>
         <div class="row">
-          <label for="updateCheck">새 판이 나오면 알려 주기</label>
+          <label for="updateCheck">새 버전이 나오면 알려 주기</label>
           <input type="checkbox" class="switch" id="updateCheck" data-key="updateCheck" />
         </div>
 
@@ -306,8 +306,7 @@
       </section>
     </main>
 
-    <script src="pet-sound.js"></script>
-    <script src="chat-sound.js"></script>
+    <script src="sound.js"></script>
     <script src="settings.js"></script>
   </body>
 </html>

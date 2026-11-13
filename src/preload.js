@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('pet', {
   listApps: () => ipcRenderer.invoke('settings:apps'),
   chooseSound: kind => ipcRenderer.invoke('sound:select', kind),
   readSound: kind => ipcRenderer.invoke('sound:read', kind),
+  builtinSound: name => ipcRenderer.invoke('sound:builtin', name),
   setGroqKey: value => ipcRenderer.invoke('groq:key', value),
   soundError: info => ipcRenderer.send('sound:error', info),
   onSoundError: fn => on('sound:error', fn),

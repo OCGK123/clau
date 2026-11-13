@@ -9,8 +9,7 @@ let loadingApps = false
 let saveQueue = Promise.resolve()
 let choosingSound = false
 const lists = { codex: null, groq: null } // 받아 온 모델 목록
-const previewSound = PetSound.create({ onError: ({ kind, message }) => setStatus(el(`${kind}FileStatus`), message, 'bad') })
-const previewFiles = ChatSound.create() // 녹음 효과음(꺅, 채팅) 미리 듣기
+const previewSound = ClauSound.create({ onError: ({ kind, message }) => setStatus(el(`${kind}FileStatus`), message, 'bad') })
 
 // ── 탭 ─────────────────────────────────────────────────────────────────
 function showTab(name) {
@@ -286,16 +285,18 @@ for (const item of items()) {
   item.querySelector('.pitem-head').addEventListener('pointerdown', e => {
     // 스위치와 화살표는 그대로 누르게 둔다. 손잡이나 이름 칸을 잡으면 끌 수 있다.
     if (e.button !== 0 || dragState || e.target.closest('.move, .pswitch')) return
+    // 아직 붙잡지 않는다. 붙잡으면 그냥 누른 것(클릭)이 이름 버튼에 닿지 않아 설정이 펼쳐지지 않는다.
+    // 실제로 끌기 시작할 때 붙잡는다.
     dragState = { item, pointerId: e.pointerId, startY: e.clientY, lastY: e.clientY, started: false, from: items().indexOf(item) }
-    item.querySelector('.pitem-head').setPointerCapture(e.pointerId)
   })
   const head = item.querySelector('.pitem-head')
-  head.addEventListener('pointermove', e => {
+  window.addEventListener('pointermove', e => {
     const d = dragState
     if (!d || d.item !== item || d.pointerId !== e.pointerId) return
     if (!d.started) {
       if (Math.abs(e.clientY - d.startY) < 5) return
       d.started = true
+      head.setPointerCapture(d.pointerId)
       item.classList.add('dragging')
       list.classList.add('sorting')
     }
@@ -335,8 +336,8 @@ for (const item of items()) {
     if (offset && !info?.cfg.reduceMotion) item.animate([{ transform: `translateY(${offset}px)` }, { transform: 'translateY(0)' }], { duration: 180, easing: 'cubic-bezier(.2,.9,.3,1.1)' })
     if (items().indexOf(item) !== d.from) saveOrder()
   }
-  head.addEventListener('pointerup', drop)
-  head.addEventListener('pointercancel', drop)
+  window.addEventListener('pointerup', drop)
+  window.addEventListener('pointercancel', drop)
   head.addEventListener('lostpointercapture', drop)
 }
 
@@ -372,7 +373,6 @@ function render() {
   el('opacityOut').textContent = `${cfg.opacity}%`
   el('soundVolumeOut').textContent = `${cfg.soundVolume}%`
   previewSound.configure(cfg)
-  previewFiles.configure(cfg)
 
   // 조건이 맞을 때만 보이는 줄
   for (const row of document.querySelectorAll('[data-when]')) {
@@ -460,14 +460,14 @@ function renderUpdate() {
     available: u.canInstall ? '지금 업데이트' : '받으러 가기',
     downloading: `받는 중 ${u.progress}%`,
     installing: '바꾸는 중',
-  }[u.state] || '새 판 확인'
+  }[u.state] || '새 버전 확인'
   el('updateButton').classList.toggle('primary', u.state === 'available')
   el('updateProgress').hidden = u.state !== 'downloading' && u.state !== 'installing'
   el('updateProgress').value = u.progress
   if (u.state === 'error') setStatus(el('updateStatus'), u.error, 'bad')
-  else if (u.state === 'latest') setStatus(el('updateStatus'), '가장 새 판이에요.', 'ok')
-  else if (u.state === 'available') setStatus(el('updateStatus'), `${u.version} 판이 나왔어요.${u.canInstall ? ' 받아서 바꾼 뒤 다시 켜져요.' : ''}`)
-  else if (u.state === 'installing') setStatus(el('updateStatus'), '곧 새 판으로 다시 켜져요.')
+  else if (u.state === 'latest') setStatus(el('updateStatus'), '최신 버전이에요.', 'ok')
+  else if (u.state === 'available') setStatus(el('updateStatus'), `${u.version} 버전이 나왔어요.${u.canInstall ? ' 받아서 바꾼 뒤 다시 켜져요.' : ''}`)
+  else if (u.state === 'installing') setStatus(el('updateStatus'), '곧 새 버전으로 다시 켜져요.')
   else setStatus(el('updateStatus'), '')
 }
 el('updateButton').addEventListener('click', async () => {
@@ -527,21 +527,12 @@ el('targetAppSelect').addEventListener('change', () => {
   if (app) apply({ targetAppSelection: { kind: app.kind, id: app.id, label: app.label } })
 })
 async function playPreview(kind) {
-  // '꺅'은 녹음 파일이라 따로 재생한다
-  if (kind === 'petting' && info.cfg.pettingSound === 'squee') {
-    previewFiles.configure(info.cfg)
-    previewFiles.preview('squee')
-    setStatus(el('pettingFileStatus'), '꺅 효과음을 재생해요.')
-    return
-  }
-  previewSound.unlock()
   await saveQueue
   try {
     previewSound.configure(info.cfg)
     await previewSound.prepare(kind)
-    if (kind === 'petting') previewSound.pat()
-    else previewSound.talk()
-    setStatus(el(`${kind}FileStatus`), info.cfg[`${kind}Sound`] === 'custom' ? '선택한 파일을 재생해요.' : '기본 효과음을 재생해요.')
+    await previewSound.preview(kind)
+    setStatus(el(`${kind}FileStatus`), '')
   } catch (error) { setStatus(el(`${kind}FileStatus`), `이 소리를 재생하지 못했어요: ${error.message || error}`, 'bad') }
 }
 function chooseSound(kind) {
@@ -574,7 +565,7 @@ el('previewPetting').addEventListener('click', () => playPreview('petting'))
 el('previewTalking').addEventListener('click', () => playPreview('talking'))
 el('choosePettingSound').addEventListener('click', () => chooseSound('petting'))
 el('chooseTalkingSound').addEventListener('click', () => chooseSound('talking'))
-el('previewChat').addEventListener('click', () => { previewFiles.configure(info.cfg); previewFiles.preview('chatOpen') })
+el('previewChat').addEventListener('click', () => { previewSound.configure(info.cfg); previewSound.preview('chatResult') })
 window.addEventListener('beforeunload', () => previewSound.dispose())
 window.pet.onSoundError?.(({kind, message}) => setStatus(el(`${kind}FileStatus`), message, 'bad'))
 

@@ -35,9 +35,8 @@ async function renderer({ hidden = false } = {}) {
   for (const key of ['ChatVisibility', 'ChatLayout', 'ChatStarted', 'ChatCancelled', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Cfg']) pet[`on${key}`] = fn => { callbacks[key] = fn }
   class ClockDate extends Date { static now() { return now } }
   const played = []
-  class Audio { constructor(src) { this.src = src } play() { played.push(this.src.split('/').pop()); return Promise.resolve() } pause() {} }
-  const ChatSound = { create: options => require('../src/chat-sound').create({ ...options, Audio }) }
-  const context = vm.createContext({ window: { pet, ChatSound, addEventListener() {} }, document, Date: ClockDate, performance: { now: () => now },
+  const ClauSound = { create: () => ({ configure() {}, setVisible() {}, stop() {}, stopTalk() {}, talk: () => played.push('talk'), play: name => played.push(name) }) }
+  const context = vm.createContext({ window: { pet, ClauSound, addEventListener() {} }, document, Date: ClockDate, performance: { now: () => now },
     setTimeout: (fn, delay) => { const key = ++id; timers.set(key, { at: now + delay, fn }); return key }, clearTimeout: key => timers.delete(key),
     requestAnimationFrame: fn => { const key = ++id; frames.set(key, fn); return key }, cancelAnimationFrame: key => frames.delete(key),
   })
@@ -126,7 +125,7 @@ test('chat sounds play once each: open, send, first reply, close', async () => {
   r.callbacks.Delta('안녕!')
   r.callbacks.Done('안녕! 반가워.')
   r.callbacks.ChatVisibility({ open: false })
-  assert.deepEqual(r.played, ['chat-open.mp3', 'chat-enter.mp3', 'chat-result.mp3', 'chat-close.mp3'])
+  assert.deepEqual(r.played, ['chatOpen', 'chatEnter', 'chatResult', 'chatClose'])
 })
 
 test('auto-close waits for inactivity, preserves drafts, and never closes on a slow final answer', async () => {
@@ -156,6 +155,8 @@ test('hidden chat does zero frame work and streaming keeps its latest complete t
   r.callbacks.Delta('첫 번째 답변')
   assert.equal(r.frames.size, 1)
   r.frame()
+  r.advance(1000)
+  r.frame()
   assert.equal(r.elements.answer.textContent, '첫 번째 답변')
   r.document.visibilityState = 'hidden'
   r.document.listeners.visibilitychange()
@@ -165,4 +166,25 @@ test('hidden chat does zero frame work and streaming keeps its latest complete t
   r.document.visibilityState = 'visible'
   r.document.listeners.visibilitychange()
   assert.equal(r.elements.answer.textContent, '첫 번째 답변이에요.')
+})
+
+test('answers appear one character at a time with a talking sound per character', async () => {
+  const r = await renderer()
+  r.finishOpen()
+  r.callbacks.ChatStarted()
+  r.callbacks.Delta('안녕 클로')
+  const seen = []
+  for (let i = 0; i < 12; i++) { r.frame(); seen.push(r.elements.answer.textContent); r.advance(30) }
+  assert.equal(r.elements.answer.textContent, '안녕 클로')
+  // 한 번에 다 나오지 않고 앞에서부터 늘어난다.
+  assert.ok(seen.includes('안') && seen.includes('안녕'))
+  for (const [i, text] of seen.entries()) if (i) assert.ok(text.startsWith(seen[i - 1]))
+  // 공백을 뺀 글자 수만큼 말소리.
+  assert.equal(r.played.filter(name => name === 'talk').length, 4)
+  // 다른 서비스로 넘어가며 앞의 글자를 버리면 처음부터 다시 나타난다.
+  r.callbacks.Delta('')
+  r.callbacks.Delta('새 대답')
+  r.advance(1000)
+  r.frame()
+  assert.equal(r.elements.answer.textContent, '새 대답')
 })

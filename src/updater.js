@@ -1,5 +1,5 @@
-// 업데이트: GitHub 릴리스에 올라온 새 판을 받아 지금 설치된 자리에 바꿔 넣는다.
-//   1. releases/latest/download/latest.json 에서 새 판 번호와 파일별 sha256을 읽는다 (API 호출 한도와 무관)
+// 업데이트: GitHub 릴리스에 올라온 새 버전을 받아 지금 설치된 자리에 바꿔 넣는다.
+//   1. releases/latest/download/latest.json 에서 새 버전 번호와 파일별 sha256을 읽는다 (API 호출 한도와 무관)
 //   2. 이 컴퓨터용 zip을 설치 폴더 옆에 받아 sha256을 맞춰 보고 푼다
 //   3. 클로가 꺼지면 폴더를 바꿔치기하고 다시 켜는 작은 스크립트를 남기고 물러난다
 const crypto = require('node:crypto')
@@ -110,7 +110,7 @@ async function download(file, dest, { fetch: fetcher = globalThis.fetch, onProgr
 }
 
 const SWAP_SH = `#!/bin/sh
-# 클로가 꺼지기를 기다렸다가 새 판으로 바꾸고 다시 켠다.
+# 클로가 꺼지기를 기다렸다가 새 버전으로 바꾸고 다시 켠다.
 pid="$1"; new="$2"; dest="$3"; stage="$4"; mac="$5"
 n=0
 while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 150 ]; do sleep 0.1; n=$((n + 1)); done
@@ -131,7 +131,7 @@ exec "$dest/clau"
 `
 
 const SWAP_PS1 = `param([int]$ProcId, [string]$New, [string]$Dest, [string]$Stage)
-# 클로가 꺼지기를 기다렸다가 새 판으로 바꾸고 다시 켠다.
+# 클로가 꺼지기를 기다렸다가 새 버전으로 바꾸고 다시 켠다.
 try { Wait-Process -Id $ProcId -Timeout 20 -ErrorAction SilentlyContinue } catch {}
 Start-Sleep -Milliseconds 400
 robocopy $New $Dest /MIR /NFL /NDL /NJH /NJS /NP /R:10 /W:1 | Out-Null
@@ -140,7 +140,7 @@ Remove-Item -LiteralPath $Stage -Recurse -Force -ErrorAction SilentlyContinue
 `
 
 /**
- * 받은 새 판을 설치 폴더 옆(같은 디스크)에 풀어 둔다. 바꿔치기가 한순간에 끝나도록.
+ * 받은 새 버전을 설치 폴더 옆(같은 디스크)에 풀어 둔다. 바꿔치기가 한순간에 끝나도록.
  * 돌려주는 것: 이어서 swap()에 넘길 정보.
  */
 async function stage(update, { execPath = process.execPath, platform = process.platform, target = targetName(), fetch: fetcher, onProgress, signal } = {}) {
