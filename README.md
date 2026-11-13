@@ -4,6 +4,20 @@
 
 ## 설치
 
+### 설치 도우미 (파일 하나, 창으로)
+
+[릴리스](https://github.com/OCGK123/clau/releases/latest)에서 내 컴퓨터용 파일 하나를 받아 여세요. 설치, 업데이트, 고치기(다시 설치), 삭제, 열기를 모두 이 창에서 합니다.
+
+| 운영체제 | 파일 | 여는 법 |
+|---|---|---|
+| Windows | `Clau-Installer-Windows.cmd` | 더블클릭 (SmartScreen이 막으면 **추가 정보 → 실행**) |
+| macOS | `Clau-Installer-macOS.command` | 우클릭 → **열기** |
+| Linux | `Clau-Installer-Linux.sh` | 파일 관리자에서 실행, 또는 `sh Clau-Installer-Linux.sh` |
+
+받은 파일은 릴리스에 올라온 sha256과 맞는지 확인한 뒤에만 설치합니다. 지울 때는 설정까지 지울지 묻고, Claude Code 연결과 자동 실행도 함께 거둡니다. 관리자 권한은 필요 없습니다.
+
+### 한 줄 설치 (터미널)
+
 터미널에 한 줄 붙여 넣으면 이 컴퓨터에 맞는 최신 버전을 받아 설치하고 켭니다. 이미 깔려 있으면 새 버전으로 바꾸고, 설정은 그대로 둡니다.
 
 **Linux, macOS**
@@ -161,6 +175,7 @@ clau --settings   설정 창과 함께 켜기
 clau --unlock     고정 모드 끄기
 clau --update     새 버전이 있으면 받아서 바꾸기
 clau --quit       끄기
+clau --cleanup    지우기 전 정리(Claude Code 연결, 자동 실행, ~/.claude/clau)
 ```
 
 ## 소스에서 실행·검증·빌드

@@ -34,5 +34,5 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --target "$GITHUB_SHA" --title "Clau $version" --notes-file CHANGELOG.md --draft
           fi
-          gh release upload "$tag" dist/Clau-*.zip dist/latest.json --clobber
+          gh release upload "$tag" dist/Clau-*.zip dist/Clau-Installer-* dist/latest.json --clobber
           gh release edit "$tag" --draft=false --latest

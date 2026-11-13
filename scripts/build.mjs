@@ -65,6 +65,16 @@ for (const target of picks) {
 
 fs.rmSync(path.join(dist, 'build'), { recursive: true, force: true })
 
+// 설치 도우미: 파일 하나로 설치·업데이트·고치기·삭제·열기. 릴리스에 그대로 올린다.
+const launcher = path.join(root, 'scripts', 'launcher')
+const unix = fs.readFileSync(path.join(launcher, 'clau-installer.sh'))
+fs.writeFileSync(path.join(dist, 'Clau-Installer-Linux.sh'), unix, { mode: 0o755 })
+fs.writeFileSync(path.join(dist, 'Clau-Installer-macOS.command'), unix, { mode: 0o755 })
+// cmd는 CRLF 줄바꿈을 가장 잘 읽는다.
+const windows = fs.readFileSync(path.join(launcher, 'Clau-Installer-Windows.cmd'), 'utf8').replace(/\r?\n/g, '\r\n')
+fs.writeFileSync(path.join(dist, 'Clau-Installer-Windows.cmd'), windows)
+console.log('→ dist/Clau-Installer-*  (Windows, macOS, Linux)')
+
 // 앱의 업데이트와 한 줄 설치가 읽는 목록: 버전 번호, 바뀐 점, 파일마다 크기와 sha256.
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')

@@ -1,3 +1,9 @@
+# Clau 0.6.35
+
+- 설치 도우미: 릴리스에 운영체제별 파일 하나(`Clau-Installer-Windows.cmd`, `Clau-Installer-macOS.command`, `Clau-Installer-Linux.sh`)를 올립니다. 열면 창이 뜨고 설치, 업데이트, 고치기, 삭제, 열기를 고를 수 있습니다.
+- 지울 때 Claude Code 연결, 자동 실행, `~/.claude/clau`를 함께 거둡니다(`clau --cleanup`). 설정은 지울지 묻습니다.
+- 기본 말투와 성격을 새 캐릭터 설정(JSON)으로 바꿨습니다. 똑똑하고 다정하지만 장난기 많고 살짝 건방진 클로입니다.
+
 # Clau 0.6.3
 
 - 말풍선을 열면 나오는 첫인사를 "안녕! 난 클로야. 만나서 반가워!!!!!!"로 바꿨습니다.

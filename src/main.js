@@ -1638,9 +1638,21 @@ async function selfTest(dir) {
  *   clau --unlock   고정 모드 끄기
  *   clau --update   새 버전이 있으면 받아서 바꾸기
  *   clau --quit     끄기
+ *   clau --cleanup  지우기 전 정리: Claude Code 연결, 자동 실행, ~/.claude/clau 를 거둔다
  * 처음 켤 때 --settings 를 붙이면 설정 창도 같이 열린다.
  */
+/**
+ * 지우기 전에 클로가 이 컴퓨터에 걸어 둔 것을 거둔다: Claude Code 연결(settings.json의 경로 한 줄),
+ * 컴퓨터를 켤 때 자동 실행, ~/.claude/clau. 설정 파일은 남긴다(지울지는 설치 도우미가 묻는다).
+ */
+function cleanup() {
+  try { if (modConnected()) connectMod(false) } catch {}
+  try { setAutostart(false) } catch {}
+  try { fs.rmSync(CLAU_HOME, { recursive: true, force: true }) } catch {}
+}
+
 function onSecondLaunch(argv) {
+  if (argv.includes('--cleanup')) { cleanup(); return app.quit() }
   if (argv.includes('--quit')) return app.quit()
   if (argv.includes('--unlock')) return applySettings({ locked: false })
   if (argv.includes('--hello')) return win?.webContents.send('pet:hello')
@@ -1652,6 +1664,8 @@ if (!app.requestSingleInstanceLock()) {
   app.quit() // 이미 떠 있다: 명령줄은 그쪽으로 넘어갔다
 } else if (process.argv.includes('--quit')) {
   app.exit(0) // 꺼져 있는데 끄라고 했다
+} else if (process.argv.includes('--cleanup')) {
+  app.whenReady().then(() => { cleanup(); app.exit(0) }) // 창을 띄우지 않고 거두기만 한다
 } else if (needsX11Restart || process.argv.includes('--detach')) {
   // 새로 띄우고 물러난다. --detach 는 부른 쪽(Claude Code)이 기다리지 않게 하려는 것.
   const args = process.argv.slice(1).filter(arg => arg !== '--detach')
