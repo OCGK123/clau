@@ -53,6 +53,7 @@ function build() {
   const make = (role, parent, cls) => {
     const layerRole = role === 'eyes_petted' ? 'eyes_x' : role
     if (!layers.layers[layerRole]) return
+    if (role === 'eyes_open') return makeEyes(parent, cls)
     const img = document.createElement('img')
     img.dataset.role = role
     img.className = cls
@@ -65,6 +66,32 @@ function build() {
   for (const role of BODY_ROLES) make(role, bodyEl, role.startsWith('eyes') ? 'eyes' : role.startsWith('mouth') ? 'mouth' : '')
   window.PetAnimator.attach(moverEl, imgs.buddy ?? null)
   window.PetFx.attach(el('fx'))
+}
+
+/**
+ * 뜬 눈은 세 장을 겹친다: 흰자, 눈동자(눈 모양 안에서만 보임), 눈꺼풀 선.
+ * 마우스 따라보기는 눈동자만 움직인다. 깜빡임은 이 묶음 전체를 누른다.
+ */
+function makeEyes(parent, cls) {
+  const stack = document.createElement('div')
+  stack.dataset.role = 'eyes_open'
+  stack.className = `${cls} eye-stack`
+  const layer = (name, into, className) => {
+    const img = document.createElement('img')
+    img.src = `../assets/${name}.png`
+    img.draggable = false
+    img.className = className
+    into.appendChild(img)
+    return img
+  }
+  layer('eyes_white', stack, 'eye-white')
+  const clip = document.createElement('div')
+  clip.className = 'eye-clip'
+  stack.appendChild(clip)
+  layer('eyes_iris', clip, 'eye-iris')
+  layer('eyes_lid', stack, 'eye-lid')
+  parent.appendChild(stack)
+  imgs.eyes_open = stack
 }
 
 /** 지금 그릴 모양. 메인이 정해 보내 준다(자동 모드는 바닥에 앉았는지에 따라 바뀐다). */
@@ -126,8 +153,9 @@ function layout() {
     eyeAim = {
       x: (petW - vw * s) / 2 + (cfg.flip ? vw * s - local : local),
       y: unit * HEADROOM + (eyes[1] - vy + eyes[3] / 2) * s,
-      reachX: unit * 0.016, // 키의 1.6%
-      reachY: unit * 0.01,
+      // 눈동자가 흰자 안에 머무는 폭(그림 픽셀 기준: 옆으로 10, 위아래로 5).
+      reachX: 10 * s,
+      reachY: 5 * s,
     }
   }
   aimEyes()
@@ -145,6 +173,8 @@ let eyeAim = null // 눈 가운데와 움직일 수 있는 폭
 let look = null // 펫 창 기준 마우스 자리
 function aimEyes() {
   const s = geometry?.stage
+  // 눈동자가 보일 때만 따라본다(감은 눈, X 눈, 웃는 눈일 때는 쉰다).
+  if (petEl.dataset.eyes !== 'open') return
   if (!look || !eyeAim || !s || !cfg?.lookAtCursor || cfg.reduceMotion) {
     petEl.style.setProperty('--look-x', '0px')
     petEl.style.setProperty('--look-y', '0px')
@@ -154,7 +184,7 @@ function aimEyes() {
   const dy = look.y - (s.top + eyeAim.y)
   const distance = Math.hypot(dx, dy) || 1
   // 가까우면 조금, 멀어질수록 끝까지. 화면 반대편을 봐도 눈이 얼굴 밖으로 나가지 않는다.
-  const reach = Math.tanh(distance / (eyeAim.reachX * 40))
+  const reach = Math.tanh(distance / (eyeAim.reachX * 30))
   let x = (dx / distance) * reach * eyeAim.reachX
   const y = (dy / distance) * reach * eyeAim.reachY
   if (cfg.flip) x = -x // 뒤집힌 그림 안에서는 좌우가 반대
@@ -165,6 +195,10 @@ window.pet.onLook?.(point => {
   look = point
   aimEyes()
 })
+// 눈을 다시 뜨면 지금 마우스 쪽부터 본다.
+if (typeof MutationObserver === 'function') {
+  new MutationObserver(() => { if (petEl.dataset.eyes === 'open') aimEyes() }).observe(petEl, { attributes: true, attributeFilter: ['data-eyes'] })
+}
 
 /** Main owns screen coordinates. These responsive offsets also hold the same
  * screen anchor during a native window resize, before the next IPC arrives. */

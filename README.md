@@ -200,7 +200,7 @@ Linux의 UI 검사는 `xvfb-run`이 필요합니다(예: Ubuntu/Debian의 `xvfb`
 python3 scripts/build-assets.py /그림/폴더 --px 900
 ```
 
-레이어 이름과 역할은 `scripts/build-assets.py` 위쪽의 `LAYERS` 표에 있습니다. X자 눈은 렌더러에서 두 눈을 각각 그려 크기에 상관없이 선명하게 표시합니다.
+레이어 이름과 역할은 `scripts/build-assets.py` 위쪽의 `LAYERS` 표에 있습니다. 뜬 눈 그림을 바꾸면 `python3 scripts/split-eyes.py`로 흰자·눈동자·눈꺼풀 세 장(마우스 따라보기용)을 다시 만드세요. X자 눈은 렌더러에서 두 눈을 각각 그려 크기에 상관없이 선명하게 표시합니다.
 
 ### 새 버전 내기
 
