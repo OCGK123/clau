@@ -10,6 +10,8 @@
   var target = null
   var pet = null
   var hover = false
+  var inWindow = false
+  var hit = null // 펫 창 안에서 캐릭터가 차지하는 자리 [x, y, w, h]. 창이 캐릭터보다 훨씬 크다.
   var last = ''
 
   function windows() {
@@ -38,6 +40,31 @@
     var g = w.frameGeometry
     return p.x >= g.x && p.x < g.x + g.width && p.y >= g.y && p.y < g.y + g.height
   }
+  // 마우스가 캐릭터 위에 있을 때만 클릭을 받는다. 창 전체로 보면 그 큰 투명 영역이 화면 클릭을 막는다.
+  function overPet(p) {
+    if (!pet || !hit || !inside(p, pet)) return false
+    var g = pet.frameGeometry
+    return p.x >= g.x + hit[0] && p.x < g.x + hit[0] + hit[2] && p.y >= g.y + hit[1] && p.y < g.y + hit[1] + hit[3]
+  }
+  function updateHover() {
+    var now = overPet(workspace.cursorPos)
+    if (now === hover) return
+    hover = now
+    report()
+  }
+  // 앱에 캐릭터 자리를 묻는다. 창이 움직이거나 마우스가 창에 들어올 때만.
+  function refreshHit() {
+    callDBus(SERVICE, '/Tracker', 'local.clau.Tracker', 'HitRect', function (text) {
+      try {
+        var r = JSON.parse(text)
+        hit = r && r.length === 4 ? r : null
+      } catch (e) {
+        hit = null
+      }
+      updateHover()
+    })
+  }
+
   function onThisDesktop(w) {
     if (w.onAllDesktops || !w.desktops || !w.desktops.length) return true
     for (var i = 0; i < w.desktops.length; i++) if (w.desktops[i] === workspace.currentDesktop) return true
@@ -81,7 +108,11 @@
         w.skipPager = true
         w.skipTaskbar = !IN_TASKBAR
       } catch (e) {}
-      w.frameGeometryChanged.connect(report)
+      w.frameGeometryChanged.connect(function () {
+        refreshHit()
+        report()
+      })
+      refreshHit()
     } else if (isTarget(w)) {
       if (watched.indexOf(w) === -1) {
         watched.push(w)
@@ -118,10 +149,10 @@
   if (workspace.currentDesktopChanged) workspace.currentDesktopChanged.connect(report)
   if (workspace.cursorPosChanged) {
     workspace.cursorPosChanged.connect(function () {
-      var now = !!pet && inside(workspace.cursorPos, pet)
-      if (now === hover) return
-      hover = now
-      report()
+      var entered = !!pet && inside(workspace.cursorPos, pet)
+      if (entered && !inWindow) refreshHit()
+      inWindow = entered
+      updateHover()
     })
   }
   report()

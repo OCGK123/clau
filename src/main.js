@@ -392,6 +392,13 @@ function startTracker() {
     taskbar: store.get().showInDock,
     pid: process.pid,
     dir: app.getPath('userData'),
+    hitRect: () => {
+      // 창 관리자 단위로: Electron 단위 = 창 관리자 단위 × wmScale
+      const st = lastLayout?.stage
+      if (!win || !st) return ''
+      const k = wmScale || 1
+      return JSON.stringify([st.left / k, st.top / k, st.width / k, Math.min(st.height, st.cut ?? Infinity) / k])
+    },
     onState: state => {
       if (generation !== trackerGeneration) return
       heard = true

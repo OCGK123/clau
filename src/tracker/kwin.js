@@ -6,7 +6,7 @@ const path = require('node:path')
 
 let serial = 0
 
-function start({ target, taskbar, pid, dir, onState, onFail }) {
+function start({ target, taskbar, pid, dir, onState, onFail, hitRect }) {
   let dbus
   try {
     dbus = require('dbus-next')
@@ -49,8 +49,12 @@ function start({ target, taskbar, pid, dir, onState, onFail }) {
         // 깨진 메시지는 버린다.
       }
     }
+    /** 펫 창 안에서 캐릭터가 차지하는 자리(창 관리자 단위, JSON). 스크립트가 마우스 판정에 쓴다. */
+    HitRect() {
+      try { return String(hitRect?.() || '') } catch { return '' }
+    }
   }
-  Tracker.configureMembers({ methods: { Update: { inSignature: 's', outSignature: '' } } })
+  Tracker.configureMembers({ methods: { Update: { inSignature: 's', outSignature: '' }, HitRect: { inSignature: '', outSignature: 's' } } })
 
   ;(async () => {
     await bus.requestName(service, 0)
