@@ -1,10 +1,14 @@
 {
   "name": "clau",
   "productName": "Clau",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "앱 창 한쪽에 사는 작은 친구. Claude와 Codex로 대화하고 손길에 반응해요.",
   "main": "src/main.js",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OCGK123/clau.git"
+  },
   "scripts": {
     "start": "electron .",
     "assets": "python3 scripts/build-assets.py",

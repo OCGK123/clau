@@ -12,10 +12,10 @@ const DEFAULT_PERSONA = [
 ].join(' ')
 
 const MODELS = [
-  { id: 'claude-haiku-5-5', label: 'Haiku 5.5 (기본, 가장 빠름)' },
-  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
-  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
-  { id: 'claude-fable-5-2', label: 'Fable 5.2 (가장 똑똑함, 느림)' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5', note: '가장 빠름' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', note: '' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', note: '' },
+  { id: 'claude-fable-5-2', label: 'Fable 5.2', note: '가장 똑똑함, 느림' },
 ]
 
 // Claude 창 안에서의 자리: 가까운 모서리와 거기서 떨어진 거리(px).
@@ -24,6 +24,13 @@ const DEFAULT_ATTACH = { corner: 'br', dx: 28, dy: 150 }
 const DEFAULTS = {
   // 대화
   chatEnabled: true,
+  // 대답해 줄 곳: 위에서부터 차례로 묻고, 앞에서 막히면(한도·로그인·연결) 다음으로 넘어간다.
+  providers: [
+    { id: 'claude', on: true },
+    { id: 'codex', on: false },
+    { id: 'groq', on: false },
+  ],
+  // 아래 셋은 providers에서 계산되는 값이다. 예전 설정 파일과 예전 코드를 위해 남겨 둔다.
   chatProvider: 'claude',
   claudeFallbackToCodex: false,
   groqFallbackEnabled: false,
@@ -37,7 +44,8 @@ const DEFAULTS = {
 
   // 모습
   size: 220, // 캐릭터 높이(px)
-  view: 'full', // 'full' 전신 | 'bust' 상반신
+  view: 'auto', // 'full' 전신 | 'auto' 바닥에 앉으면 상반신 | 'bust' 상반신
+  seated: false, // 자동 모드: 지금 바닥에 앉아 상반신만 보이는가
   showBuddy: true, // 작은 친구 표시
   opacity: 100, // 불투명도(%)
   flip: false, // 좌우 반전
@@ -79,6 +87,8 @@ const DEFAULTS = {
   showInDock: false, // Dock(macOS)이나 작업 표시줄에 아이콘 보이기
   autostart: false, // 로그인할 때 자동 실행
   wakeWithClaude: true, // Claude Code를 열면 같이 깨우기(연결돼 있을 때)
+  updateCheck: true, // 새 판이 나왔는지 가끔 살피기
+  updateNotified: '', // 이미 알린 판 번호
 }
 
 let file = null
@@ -91,10 +101,55 @@ const clampInt = (value, lo, hi, fallback) => {
 }
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback)
 
+const PROVIDERS = ['claude', 'codex', 'groq']
+
+/** 순서 목록을 다듬는다. 없으면 예전 설정(주 서비스 + 전환 스위치 둘)에서 만든다. */
+function providerList(raw) {
+  let list
+  if (Array.isArray(raw.providers)) {
+    list = []
+    for (const item of raw.providers) {
+      if (item && PROVIDERS.includes(item.id) && !list.some(p => p.id === item.id)) list.push({ id: item.id, on: !!item.on })
+    }
+    for (const id of PROVIDERS) if (!list.some(p => p.id === id)) list.push({ id, on: false })
+  } else {
+    const first = PROVIDERS.includes(raw.chatProvider) ? raw.chatProvider : 'claude'
+    const on = {
+      claude: first === 'claude',
+      // 예전에는 Claude → Groq 사이에 Codex가 언제나 끼어 있었다.
+      codex: first === 'codex' || (first === 'claude' && (!!raw.claudeFallbackToCodex || !!raw.groqFallbackEnabled)),
+      groq: first === 'groq' || !!raw.groqFallbackEnabled,
+    }
+    list = [first, ...PROVIDERS.filter(id => id !== first)].map(id => ({ id, on: on[id] }))
+  }
+  if (!list.some(p => p.on)) list[0].on = true
+  return list
+}
+
+/** 예전 방식의 설정 바꾸기(주 서비스, 전환 스위치)를 순서 목록에 반영한다. */
+function legacyPatch(current, patch) {
+  if (patch.providers || !['chatProvider', 'claudeFallbackToCodex', 'groqFallbackEnabled'].some(key => Object.hasOwn(patch, key))) return patch
+  let list = current.map(p => ({ ...p }))
+  const toggle = (id, on) => { const item = list.find(p => p.id === id); if (item && list[0].id !== id) item.on = on }
+  if (PROVIDERS.includes(patch.chatProvider)) {
+    const item = list.find(p => p.id === patch.chatProvider)
+    list = [{ ...item, on: true }, ...list.filter(p => p !== item)]
+  }
+  if (Object.hasOwn(patch, 'claudeFallbackToCodex')) toggle('codex', !!patch.claudeFallbackToCodex)
+  if (Object.hasOwn(patch, 'groqFallbackEnabled')) toggle('groq', !!patch.groqFallbackEnabled)
+  const { chatProvider, claudeFallbackToCodex, groqFallbackEnabled, ...rest } = patch
+  return { ...rest, providers: list }
+}
+
 /** 어떤 값이 들어와도 쓸 수 있는 설정으로 다듬는다. */
 function normalize(raw) {
   const next = { ...DEFAULTS, ...raw }
-  next.chatProvider = pick(next.chatProvider, ['claude', 'codex'], DEFAULTS.chatProvider)
+  next.providers = providerList(raw || {})
+  next.chatChain = next.providers.filter(p => p.on).map(p => p.id)
+  next.chatProvider = next.chatChain[0]
+  next.claudeFallbackToCodex = next.chatChain.indexOf('codex') > 0
+  next.groqFallbackEnabled = next.chatChain.indexOf('groq') > 0
+  next.updateNotified = typeof next.updateNotified === 'string' ? next.updateNotified.slice(0, 20) : ''
   next.codexModel = typeof next.codexModel === 'string' ? next.codexModel.trim().slice(0, 200) : ''
   next.groqModel = typeof next.groqModel === 'string' && next.groqModel.trim() ? next.groqModel.trim().slice(0, 200) : DEFAULTS.groqModel
   delete next.groqApiKey
@@ -103,7 +158,7 @@ function normalize(raw) {
   next.historyTurns = clampInt(next.historyTurns, 0, 30, DEFAULTS.historyTurns)
   next.bubbleSeconds = clampInt(next.bubbleSeconds, 0, 600, DEFAULTS.bubbleSeconds)
   next.size = clampInt(next.size, 80, 800, DEFAULTS.size)
-  next.view = pick(next.view, ['full', 'bust'], 'full')
+  next.view = pick(next.view, ['full', 'auto', 'bust'], DEFAULTS.view)
   next.opacity = clampInt(next.opacity, 20, 100, 100)
   next.placement = pick(next.placement, ['claude', 'free'], 'claude')
   next.showWhen = pick(next.showWhen, ['focused', 'open'], 'focused')
@@ -111,7 +166,7 @@ function normalize(raw) {
   next.attachPos = {
     corner: pick(a.corner, ['br', 'bl', 'tr', 'tl'], DEFAULT_ATTACH.corner),
     dx: clampInt(a.dx, 0, 10000, DEFAULT_ATTACH.dx),
-    dy: clampInt(a.dy, 0, 10000, DEFAULT_ATTACH.dy),
+    dy: clampInt(a.dy, -2000, 10000, DEFAULT_ATTACH.dy), // 자동 모드에서 앉으면 아래 끝을 넘을 수 있다
   }
   next.dozeMinutes = clampInt(next.dozeMinutes, 0, 120, DEFAULTS.dozeMinutes)
   next.soundVolume = clampInt(next.soundVolume, 0, 100, DEFAULTS.soundVolume)
@@ -166,7 +221,7 @@ function get() {
 }
 
 function set(patch) {
-  cache = normalize({ ...cache, ...patch })
+  cache = normalize({ ...cache, ...legacyPatch(cache.providers, patch) })
   save()
   return cache
 }
@@ -178,4 +233,4 @@ function reset() {
   return cache
 }
 
-module.exports = { init, get, set, reset, getSaveError: () => saveError, normalize, DEFAULTS, DEFAULT_PERSONA, DEFAULT_ATTACH, MODELS }
+module.exports = { init, get, set, reset, getSaveError: () => saveError, normalize, PROVIDERS, DEFAULTS, DEFAULT_PERSONA, DEFAULT_ATTACH, MODELS }

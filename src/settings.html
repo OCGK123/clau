@@ -17,48 +17,85 @@
     </nav>
 
     <main>
-      <p id="saveStatus" class="status" role="status" aria-live="polite">바꾸면 바로 저장돼요.</p>
+      <p id="saveStatus" class="status" role="status" aria-live="polite"></p>
       <section data-page="chat">
-        <h1>함께 대화하기</h1>
         <div class="row">
           <div class="text"><label for="chatEnabled">눌러서 대화</label><p>얼굴이나 몸을 누르면 말풍선이 열려요.</p></div>
           <input type="checkbox" class="switch" id="chatEnabled" data-key="chatEnabled" />
         </div>
-        <div class="row">
-          <label for="chatProvider">대답해 줄 서비스</label>
-          <select id="chatProvider" data-key="chatProvider"><option value="claude">Claude Code</option><option value="codex">Codex</option></select>
+        <div class="plist-head">
+          <div class="text"><label id="providerTitle">대답해 줄 곳</label><p>위에서부터 차례로 물어봐요. 앞에서 한도를 다 썼거나 연결이 안 되면 다음으로 넘어가요.</p></div>
+          <button type="button" id="refreshModels" class="quiet">모델 목록 다시 받기</button>
         </div>
-        <p id="providerStatus" class="note" role="status"></p>
-        <div class="row" data-when="chatProvider=claude">
-          <div class="text"><label for="claudeFallbackToCodex">Claude를 쓸 수 없으면 Codex로</label><p>사용량 소진, 로그인·연결 문제 때 같은 질문을 이어서 보내요. Claude를 다시 쓸 수 있으면 돌아와요.</p><p id="fallbackStatus" class="note"></p></div>
-          <input type="checkbox" class="switch" id="claudeFallbackToCodex" data-key="claudeFallbackToCodex" />
-        </div>
-        <div class="row">
-          <div class="text"><label for="groqFallbackEnabled">둘 다 쓸 수 없으면 Groq로</label><p>Claude → Codex → Groq 순서로 시도해요. Codex를 기본으로 고르면 Codex → Groq 순서예요.</p></div>
-          <input type="checkbox" class="switch" id="groqFallbackEnabled" data-key="groqFallbackEnabled" />
-        </div>
-        <div class="row stack" data-when="groqFallbackEnabled=true">
-          <label for="groqKey">Groq API 키</label>
-          <div class="secret-field"><input type="password" id="groqKey" autocomplete="new-password" spellcheck="false" placeholder="gsk_…" /><button type="button" id="saveGroqKey">저장</button><button type="button" id="clearGroqKey">삭제</button></div>
-          <p id="groqKeyStatus" class="status" role="status"></p>
-          <label for="groqModel">Groq 모델</label>
-          <input type="text" id="groqModel" data-key="groqModel" placeholder="openai/gpt-oss-120b" spellcheck="false" />
-        </div>
-        <div id="claudeModelFields" data-when="chatProvider=claude">
-        <div class="row">
-          <label for="model">모델</label>
-          <select id="model"></select>
-        </div>
-        <div class="row" id="customRow" hidden>
-          <label for="customModel">모델 ID</label>
-          <input type="text" id="customModel" placeholder="claude-haiku-5-5" spellcheck="false" />
-        </div>
-        </div>
-        <div class="row stack" data-when="chatProvider=codex">
-          <label for="codexModel">Codex 모델</label>
-          <input type="text" id="codexModel" data-key="codexModel" placeholder="비워 두면 Codex 기본 모델" spellcheck="false" />
-          <p class="note">로그인한 Codex CLI로 대화해요. 모델 ID를 직접 지정할 수도 있어요.</p>
-        </div>
+        <ol id="providerList" class="plist" aria-labelledby="providerTitle">
+          <li class="pitem" data-id="claude">
+          <div class="pitem-head">
+            <span class="grip" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            <span class="rank"></span>
+            <button type="button" class="pitem-open" aria-expanded="false" aria-controls="claudeBody"><span class="pname">Claude Code</span><span class="psub" id="claudeSummary"></span></button>
+            <span class="move"><button type="button" class="up" aria-label="위로"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 6 4l3.5 3.5"/></svg></button><button type="button" class="down" aria-label="아래로"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></button></span>
+            <input type="checkbox" class="switch pswitch" aria-label="Claude Code 쓰기" />
+          </div>
+            <div class="pitem-body" id="claudeBody" hidden>
+              <div class="prow">
+                <label id="modelLabel">모델</label>
+                <div class="picker" id="modelPick" aria-labelledby="modelLabel"></div>
+              </div>
+              <div class="prow" id="customRow" hidden>
+                <label for="customModel">모델 ID</label>
+                <input type="text" id="customModel" placeholder="claude-haiku-5-5" spellcheck="false" />
+              </div>
+              <div class="prow stack">
+                <label for="claudePath">claude 실행 파일</label>
+                <input type="text" id="claudePath" data-key="claudePath" placeholder="비워 두면 알아서 찾아요" spellcheck="false" />
+                <p class="status" id="claudeStatus"></p>
+              </div>
+            </div>
+          </li>
+          <li class="pitem" data-id="codex">
+          <div class="pitem-head">
+            <span class="grip" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            <span class="rank"></span>
+            <button type="button" class="pitem-open" aria-expanded="false" aria-controls="codexBody"><span class="pname">Codex</span><span class="psub" id="codexSummary"></span></button>
+            <span class="move"><button type="button" class="up" aria-label="위로"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 6 4l3.5 3.5"/></svg></button><button type="button" class="down" aria-label="아래로"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></button></span>
+            <input type="checkbox" class="switch pswitch" aria-label="Codex 쓰기" />
+          </div>
+            <div class="pitem-body" id="codexBody" hidden>
+              <div class="prow">
+                <div class="text"><label id="codexModelLabel">모델</label><p id="codexModelNote"></p></div>
+                <div class="picker" id="codexModelPick" aria-labelledby="codexModelLabel"></div>
+              </div>
+              <div class="prow stack">
+                <label for="codexPath">codex 실행 파일</label>
+                <input type="text" id="codexPath" data-key="codexPath" placeholder="비워 두면 알아서 찾아요" spellcheck="false" />
+                <p class="status" id="codexStatus"></p>
+              </div>
+            </div>
+          </li>
+          <li class="pitem" data-id="groq">
+          <div class="pitem-head">
+            <span class="grip" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            <span class="rank"></span>
+            <button type="button" class="pitem-open" aria-expanded="false" aria-controls="groqBody"><span class="pname">Groq</span><span class="psub" id="groqSummary"></span></button>
+            <span class="move"><button type="button" class="up" aria-label="위로"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 6 4l3.5 3.5"/></svg></button><button type="button" class="down" aria-label="아래로"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></button></span>
+            <input type="checkbox" class="switch pswitch" aria-label="Groq 쓰기" />
+          </div>
+            <div class="pitem-body" id="groqBody" hidden>
+              <div class="prow">
+                <div class="text"><label id="groqModelLabel">모델</label><p id="groqModelNote"></p></div>
+                <div class="picker" id="groqModelPick" aria-labelledby="groqModelLabel"></div>
+              </div>
+              <div class="prow stack">
+                <label for="groqKey">API 키</label>
+                <div class="secret-field"><input type="password" id="groqKey" autocomplete="new-password" spellcheck="false" placeholder="gsk_…" /><button type="button" id="saveGroqKey">저장</button><button type="button" id="clearGroqKey">삭제</button></div>
+                <p id="groqKeyStatus" class="status" role="status"></p>
+              </div>
+            </div>
+          </li>
+        </ol>
+        <p id="providerStatus" class="status plist-status" role="status"></p>
+
+        <h2>말투</h2>
         <div class="row stack">
           <div class="head">
             <label for="persona">말투와 성격</label>
@@ -85,15 +122,15 @@
       </section>
 
       <section data-page="look">
-        <h1>클로의 모습</h1>
         <div class="row">
           <label for="size">크기</label>
           <span class="slider"><input type="range" id="size" data-key="size" min="100" max="600" step="10" /><output id="sizeOut"></output></span>
         </div>
         <div class="row">
-          <label>보이는 범위</label>
+          <div class="text"><label>보이는 범위</label><p id="viewHelp"></p></div>
           <div class="seg" data-key="view">
             <button type="button" data-value="full">전신</button>
+            <button type="button" data-value="auto">자동</button>
             <button type="button" data-value="bust">상반신</button>
           </div>
         </div>
@@ -116,7 +153,6 @@
       </section>
 
       <section data-page="place">
-        <h1>함께 있을 앱</h1>
         <div class="row">
           <div class="text"><label>사는 곳</label><p id="trackStatus"></p></div>
           <div class="seg" data-key="placement">
@@ -147,7 +183,6 @@
       </section>
 
       <section data-page="lock">
-        <h1>자리를 고정하기</h1>
         <div class="row">
           <div class="text"><label for="locked">고정 모드</label><p>자리가 고정되고, 클릭은 클로를 그대로 통과해요.</p></div>
           <input type="checkbox" class="switch" id="locked" data-key="locked" />
@@ -171,7 +206,6 @@
       </section>
 
       <section data-page="react">
-        <h1>손길과 소리</h1>
         <div class="row">
           <div class="text"><label for="followClaudeCode">Claude Code 따라 하기</label><p id="modStatus"></p></div>
           <input type="checkbox" class="switch" id="followClaudeCode" data-key="followClaudeCode" />
@@ -228,7 +262,6 @@
       </section>
 
       <section data-page="run">
-        <h1>실행과 연결</h1>
         <h2>언제 켤까</h2>
         <div class="row">
           <label for="autostart">컴퓨터를 켤 때</label>
@@ -254,16 +287,16 @@
           <div class="text"><label>연결</label><p id="linkStatus"></p></div>
           <button type="button" id="linkMod"></button>
         </div>
-        <div class="row stack">
-          <label for="claudePath">claude 실행 파일</label>
-          <input type="text" id="claudePath" data-key="claudePath" placeholder="비워 두면 알아서 찾아요" spellcheck="false" />
-          <p class="status" id="claudeStatus"></p>
+
+        <h2>업데이트</h2>
+        <div class="row">
+          <div class="text"><label id="versionLabel"></label><p id="updateStatus"></p></div>
+          <button type="button" id="updateButton"></button>
         </div>
-        <h2>Codex</h2>
-        <div class="row stack">
-          <label for="codexPath">codex 실행 파일</label>
-          <input type="text" id="codexPath" data-key="codexPath" placeholder="비워 두면 알아서 찾아요" spellcheck="false" />
-          <p class="status" id="codexStatus"></p>
+        <progress id="updateProgress" max="100" value="0" hidden></progress>
+        <div class="row">
+          <label for="updateCheck">새 판이 나오면 알려 주기</label>
+          <input type="checkbox" class="switch" id="updateCheck" data-key="updateCheck" />
         </div>
 
         <div class="row last">

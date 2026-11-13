@@ -204,11 +204,11 @@ test('switching a limited chat to Codex or Groq clears the stale Claude rate lim
   }
 })
 
-test('enabling either fallback route clears a previously stored Claude cooldown', async () => {
-  for (const key of ['claudeFallbackToCodex', 'groqFallbackEnabled']) {
+test('adding any fallback to the answer order clears a previously stored Claude cooldown', async () => {
+  for (const chain of [['claude', 'codex'], ['claude', 'groq'], ['claude', 'codex', 'groq']]) {
     const r = await renderer()
     r.callbacks.RateLimit({ status: 'rejected', resetsAt: 100 })
-    r.callbacks.Cfg({ ...r.evaluate('cfg'), [key]: true })
+    r.callbacks.Cfg({ ...r.evaluate('cfg'), chatChain: chain })
     assert.equal(r.evaluate('limitUntil'), 0)
     assert.equal(r.evaluate('mode'), 'idle')
   }

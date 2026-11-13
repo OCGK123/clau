@@ -148,7 +148,7 @@ form.addEventListener('submit', event => {
   event.preventDefault()
   const question = input.value.trim()
   if (!question || busy || cfg.chatEnabled === false || event.isComposing) return
-  if (Date.now() < limitUntil && !cfg.claudeFallbackToCodex && !cfg.groqFallbackEnabled) {
+  if (Date.now() < limitUntil && !(cfg.chatChain?.length > 1)) {
     const time = new Date(limitUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     showText(`zzz… 사용 제한에 걸려서 ${time}까지 쉬는 중이야.`)
     return
@@ -212,7 +212,7 @@ window.pet.onCleared(() => {
   touch()
 })
 function configure(next) {
-  if (next.claudeFallbackToCodex || next.groqFallbackEnabled) limitUntil = 0
+  if (next.chatChain?.length > 1) limitUntil = 0
   if (!providerState || cfg.chatProvider !== next.chatProvider) showProvider({provider:next.chatProvider || 'claude'})
   cfg = next
   sound.configure(cfg)

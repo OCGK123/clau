@@ -39,4 +39,9 @@ contextBridge.exposeInMainWorld('pet', {
   resetSettings: () => ipcRenderer.invoke('settings:reset'),
   clearChat: () => ipcRenderer.send('settings:clear-chat'),
   connectMod: on => ipcRenderer.invoke('mod:connect', on),
+  listModels: (provider, force) => ipcRenderer.invoke('models:list', provider, force),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  openUpdatePage: () => ipcRenderer.send('update:page'),
+  onUpdate: fn => on('update:state', fn),
 })

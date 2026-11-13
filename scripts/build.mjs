@@ -3,6 +3,7 @@
 //   node scripts/build.mjs linux      하나만 (linux | win | mac)
 import { packager } from '@electron/packager'
 import { execFileSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,7 +44,7 @@ for (const target of picks) {
     prune: true,
     asar: false,
     // 앱에 필요한 것만 넣는다: src, assets, claude-mod, package.json, 실행에 쓰는 모듈(prune이 개발용은 뺀다)
-    ignore: [/^\/dist($|\/)/, /^\/scripts($|\/)/, /^\/test($|\/)/, /^\/\.git($|\/)/, /^\/\.github($|\/)/, /\.test\.ts$/, /^\/README/, /^\/\.claude($|\/)/],
+    ignore: [/^\/dist($|\/)/, /^\/scripts($|\/)/, /^\/test($|\/)/, /^\/\.git($|\/)/, /^\/\.github($|\/)/, /\.test\.ts$/, /^\/README/, /^\/CHANGELOG/, /^\/install\.(sh|ps1)$/, /^\/\.claude($|\/)/],
   })
 
   // 배포 폴더: 앱 + 설치 스크립트 + 읽어보기
@@ -63,4 +64,16 @@ for (const target of picks) {
 }
 
 fs.rmSync(path.join(dist, 'build'), { recursive: true, force: true })
+
+// 앱의 업데이트와 한 줄 설치가 읽는 목록: 판 번호, 바뀐 점, 파일마다 크기와 sha256.
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')
+const notes = (changelog.split(/^# /m)[1] || '').split('\n').slice(1).join('\n').trim()
+const files = {}
+for (const name of fs.readdirSync(dist).filter(name => /^Clau-.+\.zip$/.test(name)).sort()) {
+  const data = fs.readFileSync(path.join(dist, name))
+  files[name] = { size: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }
+}
+fs.writeFileSync(path.join(dist, 'latest.json'), `${JSON.stringify({ version: pkg.version, notes, files }, null, 2)}\n`)
+console.log(`→ dist/latest.json  (${Object.keys(files).length} files)`)
 console.log('\n끝.')

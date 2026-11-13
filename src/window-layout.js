@@ -1,9 +1,10 @@
 // Position the pet first, then fit only its bubble to the screen. The pet's
 // screen coordinates are independent of the expanded native window bounds.
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(n, Math.max(lo, hi)))
-function layout({ position, pet, bubble, area, expanded = false, dragging = false, anchors }) {
+function layout({ position, pet, bubble, area, expanded = false, dragging = false, anchors, sink = 0 }) {
+  // sink: 아래 끝을 넘어 바닥 밑으로 들어가도 되는 깊이(자동 모드에서 상반신으로 앉을 때).
   const x = Math.round(clamp(position.x, area.x, area.x + area.width - pet.width))
-  const y = Math.round(clamp(position.y, area.y, area.y + area.height - pet.height))
+  const y = Math.round(clamp(position.y, area.y, area.y + area.height - pet.height + Math.max(0, sink)))
   const width = Math.min(bubble.width, area.width)
   const height = Math.min(bubble.height, area.height)
   const bx = Math.round(clamp(x + (pet.width - width) / 2, area.x, area.x + area.width - width))

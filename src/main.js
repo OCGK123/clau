@@ -1,5 +1,5 @@
 // 클로(Clau): Claude 창 한쪽에 붙어 산다. 원하면 화면 위에 따로 떠 있을 수도 있다.
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, safeStorage } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, safeStorage, shell, Notification } = require('electron')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -9,6 +9,8 @@ const chat = require('./chat')
 const runningApps = require('./running-apps')
 const soundFiles = require('./sound-files')
 const credentials = require('./credentials')
+const modelLists = require('./models')
+const updater = require('./updater')
 const { layout: windowLayout } = require('./window-layout')
 const trackers = require('./tracker')
 const { stripEmoji } = require('./clean')
@@ -29,11 +31,18 @@ const MOD_SOURCE = path.join(__dirname, '..', 'claude-mod')
 const MOD_DIR = path.join(CLAU_HOME, 'mod')
 const CLAUDE_SETTINGS = path.join(CLAUDE_HOME, 'settings.json')
 const BUST = 0.69 // 상반신 보기: 위에서부터 이만큼만 보인다
+const HEADROOM = 0.06 // 화면(pet.js)과 같은 값: 그림 위쪽 여백
+const SEAT_SNAP_PX = 16 // 자동 모드: 바닥에서 이만큼 안이면 앉는다
+const SEAT_SLIDE_MS = 240
 // 말풍선 상자(최대 340px) 둘레에 여유를 둔다: 등장할 때 살짝 부풀어 넘치는 모양과 그림자가 창 끝에 잘리지 않도록.
 const BUBBLE = { width: 384, height: 234 }
 const HIDE_DELAY_MS = 200 // 포커스가 잠깐 비는 순간에 깜빡이지 않도록
 const LOCK_DWELL_MS = 600 // 고정 모드: 이만큼 마우스를 올려 두면 우클릭을 받는다
 const TESTING = !!process.env.CLAU_SHOT
+const REPO = updater.repoSlug(require('../package.json'))
+const UPDATE_FIRST_CHECK_MS = 20_000
+const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000
+const MODELS_FRESH_MS = 5 * 60 * 1000
 
 let win = null
 let settingsWin = null
@@ -45,7 +54,9 @@ let expanded = false
 let bubbleClosing = false
 let lastBubbleLayout = null
 let lastLayout = null
+let lastLayoutSent = ''
 let dragFrom = null
+let seatSlide = null // 자동 모드: 놓은 뒤 바닥으로 미끄러져 앉는 중
 let history = []
 let running = null
 let soundDialogOpen = false
@@ -72,6 +83,12 @@ let stateRefreshTimer = null
 let cachedState = null
 let stateLoaded = false
 const cliCache = new Map()
+const modelCache = new Map() // 'codex' | 'groq' → { at, key, pending }
+// 업데이트: idle → checking → latest | available → downloading → installing, 어디서든 error
+let update = { state: 'idle', version: null, notes: '', page: null, progress: 0, error: null }
+let updateInfo = null
+let updateTimer = null
+let updateChecked = false
 
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(value, hi))
 
@@ -81,10 +98,31 @@ function viewRect(cfg) {
   return cfg.showBuddy || !layers.layers.base ? layers.view : layers.layers.base
 }
 
-function petSize(cfg) {
+/**
+ * 지금 보여 줄 모양.
+ *   전신·상반신: 정한 크기가 보이는 높이다.
+ *   자동: 정한 크기가 전신 높이다. 바닥에 앉으면 같은 크기 그대로 아래만 가린 상반신이 된다.
+ *         끄는 동안과 앉으러 미끄러지는 동안은 전신을 그리고 바닥 밑만 가린다.
+ */
+function petSize(cfg = store.get()) {
   const [, , vw, vh] = viewRect(cfg)
+  if (cfg.view === 'auto') {
+    const bust = cfg.seated && !dragFrom && !seatSlide
+    const full = cfg.size
+    const seat = Math.round(cfg.size * (HEADROOM + BUST * (1 - HEADROOM)))
+    return { width: Math.max(40, Math.round((cfg.size * vw) / vh)), height: bust ? seat : full, full, seat, unit: cfg.size, view: bust ? 'bust' : 'full', auto: true }
+  }
   const shownH = cfg.view === 'bust' ? vh * BUST : vh
-  return { width: Math.max(40, Math.round((cfg.size * vw) / shownH)), height: cfg.size }
+  return { width: Math.max(40, Math.round((cfg.size * vw) / shownH)), height: cfg.size, full: cfg.size, seat: cfg.size, unit: cfg.size, view: cfg.view, auto: false }
+}
+
+/** 캐릭터가 서 있는 바닥: 붙는 모드는 앱 창의 아래 끝, 아니면 화면(작업 영역)의 아래 끝. */
+function floorAt(pet) {
+  const area = screen.getDisplayMatching({ ...petPos, width: pet.width, height: pet.height }).workArea
+  let floor = area.y + area.height
+  const c = isAttached() ? claudeRect() : null
+  if (c) floor = Math.min(floor, c.y + c.height)
+  return floor
 }
 
 function defaultPosition(cfg) {
@@ -133,9 +171,12 @@ function attachedPos(cfg, c) {
   // 언제나 Claude 창 안에 머문다.
   return {
     x: Math.round(clamp(x, c.x, c.x + c.width - pet.width)),
-    y: Math.round(clamp(y, c.y, c.y + c.height - pet.height)),
+    y: Math.round(clamp(y, c.y, c.y + c.height - pet.height + sinkOf(pet))),
   }
 }
+
+/** 자동 모드에서 바닥 밑으로 들어가도 되는 깊이: 전신으로 그릴 때 상반신만 남을 때까지. */
+const sinkOf = pet => (pet.auto && pet.height > pet.seat ? pet.height - pet.seat : 0)
 
 /** 끌어다 놓은 자리를, 가장 가까운 모서리에서 떨어진 거리로 기억한다. */
 function toAttachPos(pos, c, pet) {
@@ -148,27 +189,42 @@ function toAttachPos(pos, c, pet) {
   }
 }
 
-/** 접힌 창은 캐릭터 크기만큼, 펼친 창은 그 위에 말풍선 자리만큼 더. */
+/**
+ * 캐릭터 창의 자리. 창은 언제나 '집어 들었을 때' 크기(회전 여유 포함)로 둔다. 예전엔 집을 때 키우고
+ * 놓을 때 줄였는데, 크기가 바뀌는 순간 직전 화면이 한 프레임 늘어나거나 밀려 보여서 깜빡였다.
+ * 자동 모드도 전신 크기 창을 그대로 쓰고 아래만 가려서, 전신과 상반신을 오갈 때 창이 바뀌지 않는다.
+ * 빈 자리는 마우스가 통과한다(syncInput).
+ */
 function applyBounds() {
   if (!win) return
   const cfg = store.get()
   const pet = petSize(cfg)
-  const area = screen.getDisplayMatching({ ...petPos, ...pet }).workArea
-  const art = { ...pet, artWidth: pet.width * 0.94, artTop: cfg.size * 0.06, artHeight: cfg.size * 0.94 / (cfg.view === 'bust' ? BUST : 1) }
-  // 창은 언제나 '집어 들었을 때' 크기(회전 여유 포함)로 둔다. 예전엔 집을 때 키우고 놓을 때 줄였는데,
-  // macOS가 크기가 바뀌는 순간 직전 화면을 한 프레임 늘이거나 밀어서 보여 줘서, 놓은 뒤 캐릭터가
-  // 깜빡이며 다른 곳에 순간 이동했다 돌아오는 것처럼 보였다. 빈 자리는 마우스가 통과한다(syncInput).
-  const next = windowLayout({ position: petPos, pet: art, bubble: BUBBLE, area, expanded: false, dragging: true, anchors: lastLayout?.stage })
+  const box = { width: pet.width, height: pet.full }
+  const area = screen.getDisplayMatching({ ...petPos, ...box }).workArea
+  const art = { ...box, artWidth: pet.width * 0.94, artTop: pet.unit * HEADROOM, artHeight: pet.auto ? pet.unit * (1 - HEADROOM) : pet.unit * (1 - HEADROOM) / (cfg.view === 'bust' ? BUST : 1) }
+  const next = windowLayout({ position: petPos, pet: art, bubble: BUBBLE, area, expanded: false, dragging: true, sink: pet.auto ? pet.full - pet.seat : 0 })
   petPos = next.position
-  if (JSON.stringify(next) !== JSON.stringify(lastLayout)) {
-    lastLayout = next
-    // Responsive anchors are applied before the native surface expands. In a
-    // collapsed window the available space is zero, so changing them cannot move the pet.
-    win.webContents.send('pet:layout', next)
+  // 화면은 창 안에서 캐릭터가 놓일 자리만 알면 된다. 창 크기가 고정이라 앵커 없이 픽셀로 준다.
+  const stage = { left: next.stage.left, top: next.stage.top, width: pet.width, height: pet.height }
+  // 가리는 선: 상반신은 상자 아래 끝, 자동 모드는 바닥. 끄는 중의 일반 전신·상반신은 흔들릴 수 있게 두지 않는다.
+  let cut = null
+  if (pet.auto) {
+    // 앉아 있으면 상반신 선에서, 끄는 중이면 바닥에서 자른다. 그림은 언제나 전신 길이다.
+    const visible = Math.min(pet.height, floorAt(pet) - petPos.y)
+    if (visible < pet.full) cut = Math.max(pet.seat, Math.round(visible))
+  } else if (cfg.view === 'bust' && !dragFrom) cut = pet.height
+  if (cut !== null) stage.cut = cut
+  const message = { stage, shape: { width: pet.width, height: pet.height, unit: pet.unit, view: pet.view, auto: pet.auto } }
+  lastLayout = { ...next, stage, shape: message.shape }
+  if (JSON.stringify(message) !== lastLayoutSent) {
+    lastLayoutSent = JSON.stringify(message)
+    win.webContents.send('pet:layout', lastLayout)
   }
+  // 크기가 그대로면 옮기기만 한다(크기까지 다시 정하면 X11·Windows에서 창이 다시 그려지며 깜빡인다).
   const current = win.getBounds()
-  if (['x', 'y', 'width', 'height'].some(key => current[key] !== next.bounds[key])) win.setBounds(next.bounds)
-  placeBubble()
+  if (current.width !== next.bounds.width || current.height !== next.bounds.height) win.setBounds(next.bounds)
+  else if (current.x !== next.bounds.x || current.y !== next.bounds.y) win.setPosition(next.bounds.x, next.bounds.y)
+  if (bubbleWin?.isVisible()) placeBubble()
 }
 
 function chatLayout() {
@@ -250,7 +306,7 @@ function setChatOpen(on) {
 
 /** 모드에 맞는 자리로 옮긴다. 끄는 중에는 손을 따라가야 하므로 건드리지 않는다. */
 function place() {
-  if (!win || dragFrom) return
+  if (!win || dragFrom || seatSlide) return
   const cfg = store.get()
   if (isAttached()) {
     const c = claudeRect()
@@ -363,7 +419,7 @@ function startTracker() {
 function petRect() {
   const b = win.getBounds()
   const st = lastLayout?.stage
-  return st ? { x: b.x + st.left, y: b.y + st.top, width: st.width, height: st.height } : b
+  return st ? { x: b.x + st.left, y: b.y + st.top, width: st.width, height: Math.min(st.height, st.cut ?? Infinity) } : b
 }
 
 function cursorOverPet() {
@@ -548,13 +604,16 @@ function refresh(before, cfg) {
   if (before.chatProvider !== cfg.chatProvider || (before.chatEnabled && !cfg.chatEnabled)) {
     clearChat()
   }
-  if (before.claudeFallbackToCodex !== cfg.claudeFallbackToCodex || before.groqFallbackEnabled !== cfg.groqFallbackEnabled) cancelChat(true)
+  else if (String(before.chatChain) !== String(cfg.chatChain)) cancelChat(true)
   if (before.claudePath !== cfg.claudePath || before.model !== cfg.model) chat.clearAvailability()
+  if (before.codexPath !== cfg.codexPath) modelCache.delete('codex')
+  if (before.updateCheck !== cfg.updateCheck) scheduleUpdateCheck()
   if (!cfg.chatEnabled) setChatOpen(false)
   if (before.followClaudeCode !== cfg.followClaudeCode) watchState()
   if (before.autostart !== cfg.autostart) setAutostart(cfg.autostart)
   if (before.historyTurns !== cfg.historyTurns) history = cfg.historyTurns ? history.slice(-cfg.historyTurns) : []
   if (before.wakeWithClaude !== cfg.wakeWithClaude) writeAppInfo()
+  if (before.view !== cfg.view && cfg.view === 'auto') { place(); seatIfOnFloor() }
   syncDock(before)
   setOnTop()
   place()
@@ -571,17 +630,80 @@ function refresh(before, cfg) {
 
 function applySettings(patch) {
   const before = store.get()
-  if (dragFrom && ['size', 'view', 'showBuddy', 'placement', 'targetAppSelection', 'attachPos', 'position', 'locked', 'dragEnabled'].some(key => Object.hasOwn(patch, key))) finishDrag(before)
+  if ((dragFrom || seatSlide) && ['size', 'view', 'showBuddy', 'placement', 'targetAppSelection', 'attachPos', 'position', 'locked', 'dragEnabled'].some(key => Object.hasOwn(patch, key))) {
+    stopSeatSlide()
+    finishDrag(before, false)
+  }
   return refresh(before, store.set(patch))
 }
 
-function finishDrag(cfg = store.get()) {
+function finishDrag(cfg = store.get(), settle = true) {
   if (!dragFrom) return
   dragFrom = null
+  if (cfg.view === 'auto' && settle) {
+    // 바닥에 닿았거나 바닥 밑으로 들어갔으면 상반신으로 앉는다. 앉을 자리까지 미끄러져 내려간다.
+    const pet = petSize(cfg)
+    const floor = floorAt(pet)
+    if (petPos.y + pet.full >= floor - SEAT_SNAP_PX) return slideToSeat(floor - pet.seat)
+    if (cfg.seated) store.set({ seated: false })
+  }
+  remember(cfg)
+  place()
+}
+
+/** 지금 자리를 기억한다: 붙는 모드는 앱 창의 모서리에서 떨어진 거리로. */
+function remember(cfg = store.get()) {
   const c = isAttached() ? claudeRect() : null
   if (c) store.set({ attachPos: toAttachPos(petPos, c, petSize(cfg)) })
   else store.set({ position: { ...petPos } })
-  place()
+}
+
+function stopSeatSlide() {
+  if (!seatSlide) return
+  clearTimeout(seatSlide.timer)
+  seatSlide = null
+}
+
+function slideToSeat(y) {
+  stopSeatSlide()
+  const from = petPos.y
+  const at0 = Date.now()
+  const done = () => {
+    seatSlide = null
+    store.set({ seated: true })
+    remember()
+    place()
+  }
+  if (Math.abs(y - from) < 1 || store.get().reduceMotion) {
+    petPos = { ...petPos, y }
+    return done()
+  }
+  seatSlide = { timer: null }
+  const step = () => {
+    if (!seatSlide) return
+    const t = Math.min(1, (Date.now() - at0) / SEAT_SLIDE_MS)
+    const eased = 1 - (1 - t) ** 3
+    petPos = { ...petPos, y: Math.round(from + (y - from) * eased) }
+    applyBounds()
+    if (t < 1) seatSlide.timer = setTimeout(step, 16)
+    else done()
+  }
+  seatSlide.timer = setTimeout(step, 16)
+}
+
+/** 자동 모드로 바꿨을 때: 지금 바닥에 닿아 있으면 그 자리에서 앉는다. */
+function seatIfOnFloor() {
+  const cfg = store.get()
+  if (cfg.view !== 'auto' || dragFrom) return
+  const pet = petSize({ ...cfg, seated: false })
+  const floor = floorAt(pet)
+  const onFloor = petPos.y + pet.full >= floor - SEAT_SNAP_PX
+  if (onFloor === cfg.seated) return
+  store.set({ seated: onFloor })
+  if (onFloor) {
+    petPos = { ...petPos, y: floor - pet.seat }
+    remember()
+  }
 }
 
 function clearChat() {
@@ -608,6 +730,7 @@ function menuTemplate() {
   const canAttach = !!trackers.pick() && !trackError
   return [
     { label: '설정…', click: openSettings },
+    ...(update.state === 'available' ? [{ label: `${update.version} 판으로 업데이트`, click: () => installUpdate() }] : []),
     { type: 'separator' },
     {
       label: '고정 모드',
@@ -634,7 +757,7 @@ function menuTemplate() {
         { type: 'separator' },
         {
           label: '처음 자리로',
-          click: () => applySettings({ attachPos: store.DEFAULT_ATTACH, position: null }),
+          click: () => applySettings({ attachPos: store.DEFAULT_ATTACH, position: null, seated: false }),
         },
       ],
     },
@@ -648,10 +771,12 @@ function menuTemplate() {
       })),
     },
     {
-      label: '상반신만 보기',
-      type: 'checkbox',
-      checked: cfg.view === 'bust',
-      click: item => applySettings({ view: item.checked ? 'bust' : 'full' }),
+      label: '보이는 범위',
+      submenu: [
+        ['전신', 'full'],
+        ['자동 (바닥에 앉으면 상반신)', 'auto'],
+        ['상반신', 'bust'],
+      ].map(([label, view]) => ({ label, type: 'radio', checked: cfg.view === view, click: () => applySettings({ view }) })),
     },
     {
       label: 'Claude Code 따라 하기',
@@ -789,6 +914,103 @@ function connectMod(on) {
   fs.renameSync(draft, CLAUDE_SETTINGS)
 }
 
+// ── 모델 목록 ──────────────────────────────────────────────────────────
+/** 설정 창이 열려 있을 때만 불린다. 같은 목록을 잠깐 사이에 두 번 받아 오지 않는다. */
+function listModels(provider, force) {
+  if (provider !== 'codex' && provider !== 'groq') return Promise.resolve({ models: [], source: 'none' })
+  const key = provider === 'groq' ? (groqCredential?.get() ? 'key' : 'none') : store.get().codexPath
+  const saved = modelCache.get(provider)
+  if (!force && saved && saved.key === key && Date.now() - saved.at < MODELS_FRESH_MS) return saved.pending
+  const pending = provider === 'groq'
+    ? modelLists.groq({ key: groqCredential?.get() || '' })
+    : modelLists.codex({ bin: chat.findCodex(store.get().codexPath) })
+  modelCache.set(provider, { at: Date.now(), key, pending })
+  return pending
+}
+
+// ── 업데이트 ───────────────────────────────────────────────────────────
+/** 설치본만 스스로 바꿀 수 있다. 소스에서 돌릴 때는 git pull 이 업데이트다. */
+function canSelfUpdate() {
+  if (!app.isPackaged || !updater.targetName()) return false
+  const dir = updater.installDir(process.execPath)
+  return updater.writable(dir) && updater.writable(path.dirname(dir))
+}
+
+function setUpdate(patch) {
+  const before = update.state
+  update = { ...update, ...patch }
+  settingsWin?.webContents.send('update:state', { ...update, canInstall: canSelfUpdate() })
+  if (before !== update.state) syncTray() // 메뉴에 업데이트 항목이 생기거나 사라진다
+}
+
+function scheduleUpdateCheck() {
+  clearTimeout(updateTimer)
+  updateTimer = null
+  if (TESTING || !REPO || !store.get().updateCheck) return
+  // 켜고 조금 뒤에 한 번, 그다음부터는 여섯 시간마다.
+  updateTimer = setTimeout(() => checkForUpdate(false), updateChecked ? UPDATE_EVERY_MS : UPDATE_FIRST_CHECK_MS)
+  updateTimer.unref?.()
+}
+
+async function checkForUpdate(manual) {
+  if (['checking', 'downloading', 'installing'].includes(update.state)) return
+  updateChecked = true
+  setUpdate({ state: 'checking', error: null })
+  try {
+    updateInfo = await updater.check({ repo: REPO, current: app.getVersion(), target: updater.targetName() })
+    if (!updateInfo.available) setUpdate({ state: 'latest', version: updateInfo.version, page: updateInfo.page })
+    else {
+      setUpdate({ state: 'available', version: updateInfo.version, notes: updateInfo.notes, page: updateInfo.page })
+      if (!manual) announceUpdate()
+    }
+  } catch (err) {
+    // 알아서 확인하다 실패한 건 조용히 넘긴다. 다음 차례에 다시 본다.
+    setUpdate(manual ? { state: 'error', error: String(err.message || err) } : { state: 'idle' })
+  }
+  scheduleUpdateCheck()
+}
+
+/** 새 판마다 한 번만 알린다. */
+function announceUpdate() {
+  if (store.get().updateNotified === update.version) return
+  store.set({ updateNotified: update.version })
+  if (!Notification.isSupported()) return
+  const note = new Notification({
+    title: '클로',
+    body: canSelfUpdate() ? `새 판 ${update.version}이 나왔어요. 누르면 바로 바꿔요.` : `새 판 ${update.version}이 나왔어요.`,
+    icon: path.join(ASSETS, 'icon.png'),
+    silent: true,
+  })
+  note.on('click', () => installUpdate())
+  note.show()
+}
+
+async function installUpdate() {
+  if (['checking', 'downloading', 'installing'].includes(update.state)) return
+  if (!updateInfo?.available) {
+    await checkForUpdate(true)
+    if (!updateInfo?.available) return
+  }
+  // 스스로 바꿀 수 없는 자리면 받는 곳을 열어 준다.
+  if (!canSelfUpdate() || !updateInfo.file) return shell.openExternal(updateInfo.page)
+  let shown = -1
+  setUpdate({ state: 'downloading', progress: 0, error: null })
+  try {
+    const staged = await updater.stage(updateInfo, {
+      onProgress: (phase, ratio) => {
+        // 받기 90%, 풀기 10%. 1% 바뀔 때만 화면에 알린다.
+        const percent = Math.floor(phase === 'download' ? ratio * 90 : 90 + ratio * 10)
+        if (percent !== shown) setUpdate({ progress: (shown = percent) })
+      },
+    })
+    setUpdate({ state: 'installing', progress: 100 })
+    updater.swap(staged)
+    app.quit()
+  } catch (err) {
+    setUpdate({ state: 'error', error: String(err.message || err) })
+  }
+}
+
 // ── IPC ────────────────────────────────────────────────────────────────
 function settingsInfo() {
   const find = (provider, custom) => {
@@ -812,6 +1034,8 @@ function settingsInfo() {
     modConnected: modConnected(),
     hasClaudeCode: fs.existsSync(CLAUDE_HOME),
     platform: process.platform,
+    version: app.getVersion(),
+    update: { ...update, canInstall: canSelfUpdate() },
     tracking: {
       supported: !!trackers.pick() && !trackError,
       error: trackError,
@@ -854,18 +1078,21 @@ function wireIpc() {
     const cfg = store.get()
     if (!win || cfg.locked || !cfg.dragEnabled) return
     if (!Number.isFinite(dx) || !Number.isFinite(dy)) return
-    const pet = petSize(cfg)
     const c = isAttached() ? claudeRect() : null
     if (phase === 'start') {
+      stopSeatSlide()
       dragFrom = { ...petPos }
       applyBounds()
     }
     else if (phase === 'move' && dragFrom) {
+      const pet = petSize(cfg)
       petPos = { x: Math.round(dragFrom.x + dx), y: Math.round(dragFrom.y + dy) }
       if (c) {
         petPos.x = Math.round(clamp(petPos.x, c.x, c.x + c.width - pet.width))
-        petPos.y = Math.round(clamp(petPos.y, c.y, c.y + c.height - pet.height))
+        petPos.y = Math.round(clamp(petPos.y, c.y, c.y + c.height - pet.height + sinkOf(pet)))
       }
+      // 자동 모드: 바닥 밑으로는 상반신만 남을 때까지만 들어간다.
+      if (pet.auto) petPos.y = Math.min(petPos.y, floorAt(pet) - pet.seat)
       applyBounds()
     } else if (phase === 'end' && dragFrom) {
       finishDrag(cfg)
@@ -917,8 +1144,13 @@ function wireIpc() {
     if (e.sender !== settingsWin?.webContents) throw new Error('설정 창에서 키를 입력해 주세요.')
     if (value === null) groqCredential.clear()
     else groqCredential.set(value)
+    modelCache.delete('groq')
     return settingsInfo()
   })
+  ipcMain.handle('models:list', (_e, provider, force) => listModels(provider, !!force))
+  ipcMain.handle('update:check', () => checkForUpdate(true).then(settingsInfo))
+  ipcMain.handle('update:install', () => { installUpdate(); return settingsInfo() })
+  ipcMain.on('update:page', () => { if (update.page || REPO) shell.openExternal(update.page || `https://github.com/${REPO}/releases`) })
   ipcMain.handle('sound:select', async (e, kind) => {
     if (!['petting', 'talking'].includes(kind) || e.sender !== settingsWin?.webContents) throw new Error('설정 창에서 효과음을 선택해 주세요.')
     if (soundDialogOpen) return { cancelled: true, info: settingsInfo() }
@@ -948,8 +1180,13 @@ function wireIpc() {
     settingsWin?.webContents.send('sound:error', { kind: info.kind, message: info.message.slice(0, 500) })
   })
   ipcMain.handle('settings:set', (_e, patch) => {
+    // 'Claude Code 따라 하기'를 켜면 연결까지 한 번에 한다. 연결해야 다른 세션에서도 표정이 따라간다.
+    let modError = null
+    if (patch?.followClaudeCode === true && fs.existsSync(CLAUDE_HOME) && !modConnected()) {
+      try { connectMod(true) } catch (err) { modError = String(err.message || err) }
+    }
     applySettings(patch)
-    return settingsInfo()
+    return { ...settingsInfo(), modError }
   })
   ipcMain.handle('settings:reset', () => {
     const before = store.get()
@@ -1062,26 +1299,70 @@ async function selfTest(dir) {
   applySettings({ followClaudeCode: false, placement: 'free', position: { x: 300, y: 300 }, locked: false })
   await wait(100)
   const pet = petSize(store.get())
-  const px = Math.round(pet.width * 0.56)
-  const py = Math.round(pet.height * 0.65)
+  // 창은 캐릭터보다 크다(회전 여유). 캐릭터가 그 안 어디에 있는지부터 구한다.
+  const frame = win.getBounds()
+  const stageAt = lastLayout.stage
+  const px = Math.round(stageAt.left + pet.width * 0.56)
+  const py = Math.round(stageAt.top + pet.height * 0.65)
+  const at = (x, y) => ({ x, y, globalX: frame.x + x, globalY: frame.y + y })
   win.show()
   win.focus()
   await wait(80)
-  win.webContents.sendInputEvent({ type: 'mouseMove', x: px, y: py, globalX: 300 + px, globalY: 300 + py })
-  win.webContents.sendInputEvent({ type: 'mouseDown', x: px, y: py, globalX: 300 + px, globalY: 300 + py, button: 'left', clickCount: 1 })
+  win.webContents.sendInputEvent({ type: 'mouseMove', ...at(px, py) })
+  win.webContents.sendInputEvent({ type: 'mouseDown', ...at(px, py), button: 'left', clickCount: 1 })
   await wait(30)
-  win.webContents.sendInputEvent({ type: 'mouseMove', x: px + 30, y: py + 2, globalX: 330 + px, globalY: 302 + py, button: 'left' })
+  win.webContents.sendInputEvent({ type: 'mouseMove', ...at(px + 30, py + 2), button: 'left' })
   await wait(100)
   console.log('drag check', await js('JSON.stringify({down,dragging,mode,eyes:petEl.dataset.eyes})'))
   check(await js('dragging && mode === "held" && petEl.dataset.eyes === "x"'), 'Dragging uses held state and X eyes')
   check(await js('imgs.eyes_x.tagName.toLowerCase() === "img" && imgs.eyes_x.src.endsWith("/assets/eyes_x.png")'), 'Held eyes use the original artwork')
-  check(win.getBounds().width > pet.width, 'Held character receives transparent sway room')
+  check(frame.width > pet.width && frame.height > pet.height, 'Window keeps transparent sway room around the character')
   await shot('held-x-eyes')
   const heldBounds = win.getBounds()
-  win.webContents.sendInputEvent({ type: 'mouseUp', x: 330 + px - heldBounds.x, y: 302 + py - heldBounds.y, globalX: 330 + px, globalY: 302 + py, button: 'left', clickCount: 1 })
-  await wait(100)
-  check(await js('!dragging && down === null && bodyEl.style.transform === ""'), 'Releasing clears capture motion')
-  check(win.getBounds().width === pet.width, 'Release restores normal window size')
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: frame.x + px + 30 - heldBounds.x, y: frame.y + py + 2 - heldBounds.y, globalX: frame.x + px + 30, globalY: frame.y + py + 2, button: 'left', clickCount: 1 })
+  await wait(1100)
+  check(await js('!dragging && down === null && settle === null && bodyEl.style.transform === ""'), 'Releasing settles the tilt and clears held motion')
+  check(win.getBounds().width === frame.width && win.getBounds().height === frame.height, 'Release never resizes the window')
+
+  // 상반신: 창이 커도 다리는 보이지 않는다.
+  applySettings({ view: 'bust', position: { x: 300, y: 300 } })
+  await wait(150)
+  check(lastLayout.stage.cut === lastLayout.stage.height && await js('getComputedStyle(stage).clipPath !== "none"'), 'Bust view hides the lower body inside the larger window')
+  await shot('view-bust')
+
+  // 자동: 바닥에 내려놓으면 같은 크기로 앉고(상반신), 들어 올리면 전신.
+  const drag = (phase, dx = 0, dy = 0) => ipcMain.emit('pet:drag', {}, phase, dx, dy)
+  const floor = screen.getPrimaryDisplay().workArea.y + screen.getPrimaryDisplay().workArea.height
+  applySettings({ view: 'auto', seated: false, position: { x: 300, y: 200 } })
+  await wait(150)
+  const autoFrame = win.getBounds()
+  const fullScale = await js('scale')
+  check(!store.get().seated && lastLayout.shape.view === 'full' && lastLayout.stage.cut === undefined, 'Auto view shows the full body away from the floor')
+  await shot('view-auto-full')
+  drag('start')
+  drag('move', 0, floor - 200)
+  await wait(80)
+  check(lastLayout.stage.cut > 0 && petPos.y === floor - petSize().seat, 'Dragging below the floor sinks the body and stops at the bust line')
+  drag('end')
+  await wait(SEAT_SLIDE_MS + 200)
+  check(store.get().seated && lastLayout.shape.view === 'bust' && petPos.y + lastLayout.shape.height === floor && lastLayout.stage.cut === lastLayout.shape.height, 'Dropping on the floor seats the character as a bust, cut at the floor')
+  check(Math.abs(await js('scale') - fullScale) < 1e-9, 'Seated bust keeps exactly the same drawing size as the full body')
+  const seatedFrame = win.getBounds()
+  check(seatedFrame.width === autoFrame.width && seatedFrame.height === autoFrame.height, 'Switching between full and bust never resizes the window')
+  await shot('view-auto-seated')
+  drag('start')
+  drag('move', 0, -300)
+  await wait(60)
+  drag('end')
+  await wait(200)
+  check(!store.get().seated && lastLayout.shape.view === 'full' && lastLayout.stage.cut === undefined, 'Lifting the character off the floor shows the full body again')
+  drag('start')
+  drag('move', 0, floor - petPos.y - petSize().full - 6)
+  drag('end')
+  await wait(SEAT_SLIDE_MS + 200)
+  check(store.get().seated, 'Dropping just above the floor also sits down')
+  applySettings({ view: 'full', seated: false })
+  await wait(80)
 
   applySettings({ chatEnabled: false, dragEnabled: false, petting: false })
   await wait(80)
@@ -1105,7 +1386,59 @@ async function selfTest(dir) {
   check(await settingsJs('el("targetAppSelect").selectedOptions[0].textContent.includes("저장됨")'), 'Saved app remains selected when its window closes')
   applySettings({ chatProvider: 'codex' })
   await wait(100)
-  check(await settingsJs('!el("codexModel").closest(".row").hidden && el("claudeModelFields").hidden'), 'Codex selection reveals correct provider settings')
+  check(await settingsJs('[...el("providerList").children].map(i => i.dataset.id).join() === "codex,claude,groq" && el("providerList").firstElementChild.querySelector(".rank").textContent === "1"'), 'Choosing Codex first puts it at the top of the answer order')
+  // 순서 목록: 화살표로 옮기기, 끌어서 옮기기, 칸을 눌러 설정 펼치기
+  await settingsJs('el("providerList").querySelector("[data-id=groq] .up").click(); saveQueue')
+  await wait(60)
+  check(store.get().providers.map(p => p.id).join() === 'codex,groq,claude', 'Arrow buttons reorder the answer order and save it')
+  await settingsJs('el("providerList").querySelector("[data-id=groq] .pswitch").click(); saveQueue')
+  await wait(60)
+  check(store.get().chatChain.join() === 'codex,groq,claude', 'Turning a provider on adds it to the answer chain in list order')
+  await settingsJs('showTab("chat")')
+  await wait(50)
+  const listBox = await settingsJs('(() => { const r = el("providerList").querySelector("[data-id=claude] .grip").getBoundingClientRect(); const top = el("providerList").firstElementChild.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), top: Math.round(top.top + 4) } })()')
+  settingsWin.focus()
+  settingsWin.webContents.sendInputEvent({ type: 'mouseMove', x: listBox.x, y: listBox.y })
+  settingsWin.webContents.sendInputEvent({ type: 'mouseDown', x: listBox.x, y: listBox.y, button: 'left', clickCount: 1 })
+  for (let y = listBox.y; y >= listBox.top; y -= 8) {
+    settingsWin.webContents.sendInputEvent({ type: 'mouseMove', x: listBox.x, y, button: 'left' })
+    await wait(16)
+  }
+  await shot('settings-order-dragging', settingsWin)
+  settingsWin.webContents.sendInputEvent({ type: 'mouseUp', x: listBox.x, y: listBox.top, button: 'left', clickCount: 1 })
+  await wait(120)
+  await settingsJs('saveQueue')
+  check(store.get().providers.map(p => p.id).join() === 'claude,codex,groq' && store.get().chatProvider === 'claude', 'Dragging a provider to the top makes it answer first')
+  check(await settingsJs('!el("providerList").querySelector(".pitem.dragging") && el("claudeBody").hidden'), 'Finishing a drag neither leaves a lifted row nor opens its settings')
+  await settingsJs('el("providerList").querySelector("[data-id=codex] .pitem-open").click()')
+  await wait(60)
+  check(await settingsJs('!el("codexBody").hidden && el("codexBody").contains(el("codexModelPick"))'), 'Pressing a provider opens that provider\'s own settings')
+  // 모델 고르기: 받아 온 목록이 그대로 보이고, 누르면 저장된다.
+  await settingsJs(`lists.codex={models:[{id:'gpt-test-a',label:'GPT Test A',note:'first'},{id:'gpt-test-b',label:'GPT Test B',note:'second'}],source:'account'};lists.groq={models:[{id:'openai/gpt-oss-120b',label:'gpt-oss-120b',note:'OpenAI'},{id:'test/groq-b',label:'groq-b',note:'Test'}],source:'account'};renderModels()`)
+  check(await settingsJs('el("codexModelPick").querySelectorAll(".picker-item").length === 3 && el("groqModelPick").querySelectorAll(".picker-item").length === 2 && el("modelPick").querySelectorAll(".picker-item").length === info.models.length + 1'), 'Every provider shows a populated model list')
+  check(await settingsJs('!el("codexModelPick").querySelector(".picker-button").disabled && el("codexModelPick").querySelector(".picker-name").textContent === "Codex 기본"'), 'Codex picker starts on the CLI default and is usable')
+  await settingsJs('showTab("chat")')
+  await settingsJs('el("codexModelPick").querySelector(".picker-button").click()')
+  await wait(220)
+  check(await settingsJs('!el("codexModelPick").querySelector(".picker-menu").hidden && document.activeElement.classList.contains("picker-item")'), 'Opening a model picker shows its list and focuses the current model')
+  await settingsJs('showTab("chat")')
+  await shot('settings-codex-models', settingsWin)
+  await settingsJs('el("codexModelPick").querySelector("[data-id=gpt-test-b]").click();saveQueue')
+  await wait(60)
+  check(store.get().codexModel === 'gpt-test-b' && await settingsJs('el("codexModelPick").querySelector(".picker-menu").hidden && el("codexModelPick").querySelector(".picker-name").textContent === "GPT Test B"'), 'Picking a Codex model saves it and closes the list')
+  await settingsJs('el("providerList").querySelector("[data-id=groq] .pitem-open").click()')
+  await wait(60)
+  await settingsJs('el("groqModelPick").querySelector(".picker-button").click()')
+  await wait(220)
+  await shot('settings-groq-models', settingsWin)
+  await settingsJs('el("groqModelPick").querySelector("[data-id=\\"test/groq-b\\"]").click();saveQueue')
+  await wait(60)
+  check(store.get().groqModel === 'test/groq-b', 'Picking a Groq model saves it')
+  applySettings({ chatProvider: 'groq' })
+  await wait(100)
+  check(store.get().chatChain[0] === 'groq' && await settingsJs('el("providerList").firstElementChild.dataset.id === "groq"'), 'Groq can be the first choice')
+  applySettings({ chatProvider: 'codex', codexModel: '', groqModel: 'openai/gpt-oss-120b' })
+  await wait(100)
   await settingsJs('showTab("chat")')
   await shot('settings-codex', settingsWin)
   // Native selection is stubbed only in this isolated test profile; decoding
@@ -1157,17 +1490,14 @@ async function selfTest(dir) {
     })
     setChatOpen(true)
     await wait(60)
-    const firstPath = await bjs('shellPath.getAttribute("d")')
-    await shot(`morph-${label}-early`, bubbleWin)
-    await wait(80)
-    const middlePath = await bjs('shellPath.getAttribute("d")')
-    await shot(`morph-${label}-middle`, bubbleWin)
-    await wait(220)
-    const finalPath = await bjs('shellPath.getAttribute("d")')
-    check(firstPath !== finalPath && middlePath !== finalPath, `${label} morph changes actual Bézier path geometry`)
+    check(await bjs('phase === "opening" || phase === "open"'), `${label} bubble starts opening at once`)
+    await shot(`bubble-${label}-early`, bubbleWin)
+    await wait(420)
+    check(await bjs('phase === "open"') && bubbleWin.isVisible(), `${label} bubble finishes opening`)
+    await shot(`bubble-${label}-open`, bubbleWin)
     assert.deepEqual(win.getBounds(), initial)
     setChatOpen(false)
-    await wait(320)
+    await wait(520)
     for (const [event, listener] of listeners) win.removeListener(event, listener)
     assert.deepEqual(win.getBounds(), initial)
     check(nativeEvents.length === 0 && !bubbleWin.isVisible(), `${label} open/close never moves, resizes, hides or shows character`)
@@ -1179,7 +1509,7 @@ async function selfTest(dir) {
       applySettings({ chatProvider: provider })
       await wait(80)
       setChatOpen(true)
-      await wait(320)
+      await wait(560)
       check(bubbleWin.isFocused() && await bjs('document.activeElement === input'), 'Chat input receives keyboard focus')
       const initial = win.getBounds()
       const nativeEvents = []
@@ -1223,7 +1553,8 @@ async function selfTest(dir) {
     await wait(340)
     check(running === null && !bubbleWin.isVisible() && await bjs('!busy'), 'Disabling chat cancels active process and closes bubble')
   }
-  check(inputTimer === null, 'Unlocked pet uses no mouse polling timer')
+  // Linux(X11)는 통과시킨 창으로 마우스 움직임을 넘겨주지 못해서, 캐릭터에 닿았는지 직접 살펴야 한다.
+  check(process.platform === 'linux' ? inputTimer !== null : inputTimer === null, 'Unlocked pet polls the mouse only where the platform needs it')
   check(stateWatcher === null, 'Disabled Claude Code following uses no file watcher')
   win.webContents.send('pet:visibility', false)
   await wait(80)
@@ -1256,6 +1587,7 @@ async function selfTest(dir) {
  *   clau            설정 창 열기 (고정 모드에서 손이 닿지 않을 때의 비상구이기도 하다)
  *   clau --hello    인사만 (Claude Code가 깨울 때)
  *   clau --unlock   고정 모드 끄기
+ *   clau --update   새 판이 있으면 받아서 바꾸기
  *   clau --quit     끄기
  * 처음 켤 때 --settings 를 붙이면 설정 창도 같이 열린다.
  */
@@ -1263,6 +1595,7 @@ function onSecondLaunch(argv) {
   if (argv.includes('--quit')) return app.quit()
   if (argv.includes('--unlock')) return applySettings({ locked: false })
   if (argv.includes('--hello')) return win?.webContents.send('pet:hello')
+  if (argv.includes('--update')) return installUpdate()
   openSettings()
 }
 
@@ -1296,6 +1629,8 @@ if (!app.requestSingleInstanceLock()) {
         if (modConnected()) copyMod()
       } catch {}
       if (process.argv.includes('--settings')) openSettings()
+      if (process.argv.includes('--update')) installUpdate()
+      else scheduleUpdateCheck()
     }
     if (TESTING) win.webContents.once('did-finish-load', () => selfTest(process.env.CLAU_SHOT).catch(error => { console.error(error); app.exit(1) }))
   })
@@ -1307,6 +1642,7 @@ if (!app.requestSingleInstanceLock()) {
     cancelChat()
     clearTimeout(inputTimer)
     clearTimeout(stateRefreshTimer)
+    clearTimeout(updateTimer)
     stateWatcher?.close()
     if (cleaned || !tracker) return
     cleaned = true

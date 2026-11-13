@@ -68,13 +68,25 @@ function build() {
   window.PetFx.attach(el('fx'))
 }
 
+/** 지금 그릴 모양. 메인이 정해 보내 준다(자동 모드는 바닥에 앉았는지에 따라 바뀐다). */
+function currentShape() {
+  const [, , vw, vh] = viewRect()
+  const given = geometry?.shape
+  if (given) return given
+  const shownH = cfg.view === 'bust' ? vh * bust : vh
+  return { width: Math.max(40, Math.round((cfg.size * vw) / shownH)), height: cfg.size, unit: cfg.size, view: cfg.view === 'bust' ? 'bust' : 'full', auto: false }
+}
+
 function layout() {
   const [vx, vy, vw, vh] = viewRect()
-  const shownH = cfg.view === 'bust' ? vh * bust : vh
-  const petH = cfg.size
-  const petW = Math.max(40, Math.round((cfg.size * vw) / shownH))
-  scale = (petH * (1 - HEADROOM)) / shownH
+  const shape = currentShape()
+  const petH = shape.height
+  const petW = shape.width
+  // 자동 모드는 전신·상반신이 같은 크기로 그려지고, 아래쪽만 바닥에 가려진다.
+  const shownH = shape.auto || shape.view !== 'bust' ? vh : vh * bust
+  scale = (shape.unit * (1 - HEADROOM)) / shownH
   const s = scale
+  const unit = shape.unit
 
   stage.style.width = `${petW}px`
   stage.style.height = `${petH}px`
@@ -82,16 +94,16 @@ function layout() {
   petEl.style.width = `${vw * s}px`
   petEl.style.height = `${vh * s}px`
   petEl.style.left = `${(petW - vw * s) / 2}px`
-  petEl.style.top = `${petH * HEADROOM}px`
-  petEl.style.setProperty('--u', `${petH / 100}px`)
-  stage.style.setProperty('--u', `${petH / 100}px`)
+  petEl.style.top = `${unit * HEADROOM}px`
+  petEl.style.setProperty('--u', `${unit / 100}px`)
+  stage.style.setProperty('--u', `${unit / 100}px`)
   petEl.classList.toggle('no-buddy', !cfg.showBuddy)
   petEl.classList.toggle('flip', cfg.flip)
   petEl.classList.toggle('calm', cfg.reduceMotion)
   stage.classList.toggle('chat-enabled', cfg.chatEnabled !== false)
   stage.classList.toggle('drag-disabled', cfg.dragEnabled === false)
   document.body.classList.toggle('reduce-motion', cfg.reduceMotion)
-  window.PetAnimator.setUnit(petH / 100)
+  window.PetAnimator.setUnit(unit / 100)
   window.PetAnimator.setCalm(cfg.reduceMotion)
   window.PetFx.setOff(cfg.reduceMotion)
   applyWindowLayout(geometry)
@@ -120,12 +132,16 @@ function layout() {
  * screen anchor during a native window resize, before the next IPC arrives. */
 function applyWindowLayout(next) {
   if (!next) return
+  const reshaped = JSON.stringify(next.shape) !== JSON.stringify(geometry?.shape)
   geometry = next
   const s = next.stage
   if (s) {
     stage.style.left = Number.isFinite(s.anchorX) ? `calc((100% - ${s.width}px) * ${s.anchorX})` : `${s.left}px`
     stage.style.top = Number.isFinite(s.anchorY) ? `calc((100% - ${s.height}px) * ${s.anchorY})` : `${s.top}px`
+    // 바닥(화면이나 앱 창의 아래 끝) 아래는 그리지 않는다. 옆과 위는 흔들릴 자리를 남긴다.
+    stage.style.clipPath = Number.isFinite(s.cut) ? `polygon(-4000px -4000px, 4000px -4000px, 4000px ${s.cut}px, -4000px ${s.cut}px)` : ''
   }
+  if (reshaped && layers && cfg) layout()
 }
 
 /** 쓰다듬는 영역(화면 px, stage 기준): 그림 꼭대기부터 눈 바로 위까지. 얼굴과 몸은 말 거는 자리다. */
@@ -672,6 +688,11 @@ function settleThenEndDrag(pointerUp) {
   const origin = bodyEl.style.transformOrigin
   heldAngle = 0
   stopHeldMotion()
+  // 마지막 움직임을 먼저 보내고 놓는다: 놓은 자리가 손이 있던 자리와 같도록.
+  if (moveFrame !== null) cancelAnimationFrame(moveFrame)
+  moveFrame = null
+  if (pendingMove) window.pet.drag('move', ...pendingMove)
+  pendingMove = null
   window.pet.drag('end')
   if (pointerUp) window.PetAnimator.bounce(0.05) // 착지하듯 한 번 꾹
   if (cfg.reduceMotion || !visible || Math.abs(start) < 0.5) return
@@ -776,9 +797,21 @@ stage.addEventListener('pointermove', e => {
   if (dragging) {
     pendulum?.move(e.screenX, e.timeStamp)
     wakeHeldMotion()
-    window.pet.drag('move', dx, dy)
+    // 창은 화면이 한 번 그려질 때마다 한 번만 옮긴다. 마우스가 1초에 수백 번 움직여도 창을 그만큼
+    // 옮기면 창 관리자가 따라 그리지 못해 깜빡인다.
+    pendingMove = [dx, dy]
+    if (moveFrame === null) moveFrame = requestAnimationFrame(flushMove)
   }
 })
+let pendingMove = null
+let moveFrame = null
+function flushMove() {
+  moveFrame = null
+  if (!pendingMove || !dragging) return
+  const [dx, dy] = pendingMove
+  pendingMove = null
+  window.pet.drag('move', dx, dy)
+}
 const release = e => {
   if (!down) return
   if (e.pointerId !== undefined && down.pointerId !== e.pointerId) return
@@ -897,10 +930,11 @@ function syncVisibility() {
 window.pet.onCfg(next => {
   const before = cfg
   cfg = next
-  if ((cfg.claudeFallbackToCodex && !before?.claudeFallbackToCodex) || (cfg.groqFallbackEnabled && !before?.groqFallbackEnabled) || (before && cfg.chatProvider !== before.chatProvider)) limitUntil = 0
+  const chainChanged = before && String(before.chatChain) !== String(cfg.chatChain)
+  if ((cfg.chatChain?.length > 1 && chainChanged) || (before && cfg.chatProvider !== before.chatProvider)) limitUntil = 0
   sound.configure(cfg)
   files.configure(cfg)
-  if (before && ['chatProvider', 'claudeFallbackToCodex', 'groqFallbackEnabled'].some(key => before[key] !== cfg[key])) sound.stop()
+  if (chainChanged) sound.stop()
   if (down && (cfg.locked || cfg.dragEnabled === false || (down.head && !cfg.petting))) release({ type: 'settings' })
   if (cfg.reduceMotion || cfg.dragPhysics === false) stopHeldMotion()
   if (cfg.chatEnabled === false) closeBubble(true)

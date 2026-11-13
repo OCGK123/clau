@@ -7,27 +7,40 @@ const { rejected, cliError, infrastructureFailure, isCancellation, isRejectedRat
 const availability = new Map()
 const COOLDOWN_MS = 45_000
 const labels = { claude: 'Claude Code', codex: 'Codex', groq: 'Groq' }
-const keyFor = (cfg, provider) => provider === 'codex' ? `codex:\n${cfg.codexPath || '<auto>'}\n${cfg.codexModel || '<default>'}` : `${cfg.claudePath || '<auto>'}\n${cfg.model || '<default>'}`
+const keyFor = (cfg, provider) => provider === 'codex' ? `codex:\n${cfg.codexPath || '<auto>'}\n${cfg.codexModel || '<default>'}`
+  : provider === 'groq' ? `groq:\n${cfg.groqModel || '<default>'}`
+  : `${cfg.claudePath || '<auto>'}\n${cfg.model || '<default>'}`
 const abortError = () => Object.assign(cliError('CANCELLED', '대화를 중지했어요.'), { name: 'AbortError' })
 
 function classify(provider, err, now) {
   if (isCancellation(err)) return null
   const failure = provider === 'codex' && err?.code === 'NO_CODEX'
     ? { kind: 'cli', reason: 'Codex 실행 파일을 사용할 수 없어요.', resetAt: null }
+    : provider === 'groq' && err?.code === 'NO_GROQ_KEY'
+      ? { kind: 'auth', reason: 'Groq API 키가 없어요.', resetAt: null }
     : provider === 'codex' && /Codex가 답 없이 끝났어요/.test(err?.message || '')
       ? { kind: 'service', reason: 'Codex가 답변하지 못했어요.', resetAt: null }
       : infrastructureFailure(err, now)
   return failure ? { ...failure, reason: failure.reason.replaceAll('Claude Code', labels[provider]) } : null
 }
 
+/** 물어볼 차례. 설정 창의 순서 목록(chatChain)을 따르고, 예전 설정 모양도 받는다. */
+function chainFor(cfg) {
+  if (Array.isArray(cfg.chatChain)) {
+    const chain = cfg.chatChain.filter((id, i, all) => labels[id] && all.indexOf(id) === i)
+    if (chain.length) return chain
+  }
+  const primary = ['codex', 'groq'].includes(cfg.chatProvider) ? cfg.chatProvider : 'claude'
+  const groqEnabled = primary !== 'groq' && cfg.groqFallbackEnabled === true
+  const chain = [primary]
+  if (primary === 'claude' && (cfg.claudeFallbackToCodex === true || groqEnabled)) chain.push('codex')
+  if (groqEnabled) chain.push('groq')
+  return chain
+}
+
 function ask(options, deps = {}) {
   if (options.cfg.chatEnabled === false) return rejected(cliError('CHAT_DISABLED', '설정에서 눌러서 대화를 켜 주세요.'))
-  const primary = options.cfg.chatProvider === 'codex' ? 'codex' : 'claude'
-  const groqEnabled = options.cfg.groqFallbackEnabled === true
-  // Enabling the final fallback keeps the requested Claude -> Codex -> Groq order.
-  const chain = [primary]
-  if (primary === 'claude' && (options.cfg.claudeFallbackToCodex === true || groqEnabled)) chain.push('codex')
-  if (groqEnabled) chain.push('groq')
+  const chain = chainFor(options.cfg)
   const now = deps.now || Date.now
   const cache = deps.availability || availability
   const failures = []
@@ -48,9 +61,7 @@ function ask(options, deps = {}) {
   function combined(err) {
     if (failures.length < 2) return err
     const lines = failures.map(failure => `${labels[failure.provider]}: ${failure.error?.message || failure.error}`)
-    const hint = failures.at(-1).provider === 'groq'
-      ? '설정 → 대화에서 Groq API 키와 모델을, 실행에서 CLI 경로와 로그인 상태를 확인해 주세요.'
-      : '설정 → 실행에서 Codex 실행 파일과 로그인 상태를 확인해 주세요.'
+    const hint = '설정 → 대화에서 각 서비스를 눌러 로그인 상태, 키, 실행 파일을 확인해 주세요.'
     return cliError('FALLBACK_FAILED', `${lines.join('\n')}\n${hint}`, {
       primaryError: failures[0].error, fallbackError: err,
       providerErrors: failures.map(value => ({ provider: value.provider, error: value.error })),
@@ -133,4 +144,4 @@ function ask(options, deps = {}) {
   }
 }
 
-module.exports = { ask, findClaude: claude.findClaude, findCodex: codex.findCodex, clearAvailability: () => availability.clear() }
+module.exports = { ask, chainFor, findClaude: claude.findClaude, findCodex: codex.findCodex, clearAvailability: () => availability.clear() }
