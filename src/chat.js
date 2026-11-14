@@ -1,3 +1,4 @@
+const questions = require('./questions')
 const claude = require('./claude')
 const codex = require('./codex')
 const groq = require('./groq')
@@ -49,6 +50,8 @@ function ask(options, deps = {}) {
   let generation = 0
   let cancelled = false
   let settled = false
+  let questionRounds = 0
+  let followup = null
   let resolveDone, rejectDone
   const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject })
   const finish = (err, value) => {
@@ -89,8 +92,10 @@ function ask(options, deps = {}) {
     const current = () => !cancelled && !settled && token === generation
     const callbacks = {
       ...publicOptions,
+      ...(followup || {}),
+      cfg: { ...options.cfg, questionSignals: provider === 'groq' && !!options.onQuestion },
       ...(provider === 'groq' ? { groqApiKey } : {}),
-      onDelta: (...args) => { if (current()) options.onDelta?.(...args) },
+      onDelta: (...args) => { if (current() && !(provider === 'groq' && options.onQuestion && String(args[1] || '').trimStart().startsWith('{'))) options.onDelta?.(...args) },
       onRateLimit: info => {
         if (!current()) return
         // A rejected primary request is being rerouted, so it must not put the
@@ -110,12 +115,26 @@ function ask(options, deps = {}) {
         try { options.onProvider?.({ provider, fallback, reason }) } catch (err) { const running = active; finish(err); running?.cancel() }
       }
     })
-    Promise.resolve(active.done).then(result => {
+    Promise.resolve(active.done).then(async result => {
       if (!current()) return
+      const signal = provider === 'groq' && options.onQuestion && questions.parse(result.text)
+      if (signal && questionRounds < 2) {
+        questionRounds++
+        let answer
+        try { answer = await options.onQuestion(signal, { provider }) } catch (err) { finish(err); return }
+        if (!current()) return
+        if (answer) {
+          followup = { history: [...(followup?.history || options.history || []), { q: followup?.question || options.question, a: result.text }], question: '사용자가 질문에 답했습니다: ' + JSON.stringify(answer) }
+          launch(index, reason)
+          return
+        }
+        result = { ...result, text: signal[0].question + '\n' + signal[0].options.map(o => o.label).join(' / ') }
+      } else if (signal) result = { ...result, text: signal[0].question }
       if (provider !== 'groq') cache.delete(keyFor(options.cfg, provider))
       finish(null, { ...result, provider })
     }, err => {
       if (!current()) return
+      if (/rate.?limit|usage.?limit|quota|사용.*한도|hit.*limit/i.test(String(err?.code || '') + ' ' + String(err?.message || ''))) options.onLimit?.({ provider })
       const failure = index < chain.length - 1 ? classify(provider, err, now()) : null
       failures.push({ provider, error: err })
       if (failure) {
@@ -128,7 +147,7 @@ function ask(options, deps = {}) {
         if (!current()) return // Cancellation is allowed inside the transition.
         route(index + 1, failure.reason)
       } else finish(isCancellation(err) ? err : combined(err))
-    })
+    }).catch(err => finish(err))
   }
   route(0)
   return {

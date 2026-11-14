@@ -158,14 +158,14 @@ const PetFx = (() => {
     if (off || !layer) return
     for (let i = 0; i < 3; i++) {
       if (layer.childElementCount >= MAX_LIVE) return
-      const size = 13
+      const size = radius * 0.32
       const node = make('sparkle', size)
       layer.appendChild(node)
       const start = (i / 3) * 360
       const frames = []
-      for (let k = 0; k <= 8; k++) {
-        const a = ((start + k * 135) * Math.PI) / 180
-        const fade = k === 0 ? 0 : k === 8 ? 0 : 1
+      for (let k = 0; k <= 144; k++) {
+        const a = ((start + k * 7.5) * Math.PI) / 180
+        const fade = k === 0 ? 0 : k === 144 ? 0 : 1
         frames.push({ transform: `translate(${(x - size / 2 + Math.cos(a) * radius).toFixed(1)}px, ${(y - size / 2 + Math.sin(a) * radius * 0.38).toFixed(1)}px) scale(${k === 0 ? 0.3 : 1})`, opacity: fade })
       }
       const anim = node.animate(frames, { duration: ms, easing: 'linear', fill: 'both' })

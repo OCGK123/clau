@@ -457,3 +457,5 @@ test('the chosen thinking face survives state refresh, layout, flips, reduced mo
   assert.equal(r.elements.pet.dataset.eyes, 'closed')
   assert.equal(r.elements.pet.dataset.mouth, 'closed')
 })
+
+test('bangs stay on the body instead of the moving face group',async()=>{const r=await renderer();assert.equal(r.evaluate('faceEl.children.includes(imgs.hair)'),false);assert.equal(r.evaluate('bodyEl.children.includes(imgs.hair)'),true)})

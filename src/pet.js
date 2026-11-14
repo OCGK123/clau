@@ -87,12 +87,13 @@ function build() {
   blushEl.className = 'blush'
   blushEl.innerHTML = BLUSH
   faceEl.appendChild(blushEl)
-  for (const role of BODY_ROLES) make(role, role === 'base' ? bodyEl : faceEl, role.startsWith('eyes') ? 'eyes' : role.startsWith('mouth') ? 'mouth' : '')
+  for (const role of BODY_ROLES.filter(role => role !== 'hair')) make(role, role === 'base' || role === 'hair' ? bodyEl : faceEl, role.startsWith('eyes') ? 'eyes' : role.startsWith('mouth') ? 'mouth' : '')
   bodyEl.appendChild(faceEl)
+  make('hair', bodyEl, '')
   markLayer = document.createElement('div')
   markLayer.className = 'marks'
   bodyEl.appendChild(markLayer)
-  window.PetAnimator.attach(moverEl, imgs.buddy ?? null, { float: buddyEl, face: faceEl, zs: [...petEl.querySelectorAll('.z')] })
+  window.PetAnimator.attach(moverEl, imgs.buddy ?? null, { float: buddyEl, zs: [...petEl.querySelectorAll('.z')] })
   window.PetFx.attach(el('fx'))
 }
 
@@ -660,7 +661,7 @@ function recompute() {
   else if (feel === 'petted' && now < shyUntil) feel = 'shy'
   let next = (dragging ? 'held' : null) ?? feel ?? (react && now < reactUntil ? react : null) ?? (asking ? 'asking' : null) ?? local ?? (now < limitUntil ? 'sleeping' : null) ?? claudeCodeMode() ?? 'idle'
   // 졸다가 Claude Code나 대화 때문에 깨면 먼저 기지개부터.
-  if ((mode === 'dozing' || mode === 'yawn') && !['idle', 'held', 'petted', 'giggle', 'shy', 'sleeping'].includes(next) && !cfg.reduceMotion) {
+  if ((mode === 'dozing' || mode === 'yawn') && !['idle', 'dozing', 'yawn', 'held', 'petted', 'giggle', 'shy', 'sleeping'].includes(next) && !cfg.reduceMotion) {
     react = 'stretch'
     reactUntil = now + STRETCH_MS
     next = 'stretch'

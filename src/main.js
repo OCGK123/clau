@@ -96,6 +96,7 @@ let updateChecked = false
 let onBattery = false
 
 // Claude Code 알림 말풍선: 일이 끝났을 때, 한도에 닿았을 때, 골라야 할 때(권한·질문·계획).
+const localQuestions = new Map()
 let noticeServer = null
 let activeNotice = null // 지금 말풍선에 떠 있는 알림 { view, ask }
 const askQueue = [] // 기다리는 고르기(먼저 온 순서)
@@ -386,10 +387,47 @@ function startNotices() {
   noticeServer.ready.then(() => writeAppInfo()).catch(() => { noticeServer = null })
 }
 
+/** Companion clarification: the selected answer resumes the same provider. */
+function askCompanion(questions, { provider }) {
+  const cfg = store.get()
+  if (!cfg.chatEnabled || cfg.ccAsk === false || !win?.isVisible() || !wantVisible()) return Promise.resolve(null)
+  const id = `chat-question-${Date.now()}-${Math.random()}`
+  return new Promise(resolve => {
+    const timer = setTimeout(() => finish(null), 180000)
+    const finish = answer => {
+      clearTimeout(timer); localQuestions.delete(id)
+      const index = askQueue.findIndex(item => item.view.id === id)
+      if (index >= 0) askQueue.splice(index, 1)
+      if (activeNotice?.view.id === id) endNotice(false)
+      resolve(answer)
+      queueMicrotask(pumpNotices)
+    }
+    localQuestions.set(id, finish)
+    askQueue.push({ local: true, ask: { id }, view: { id, kind: 'question', from: provider === 'groq' ? 'Groq · 클로' : 'Codex · 클로', questions: questions.map(q => ({ key: q.question, question: q.question, header: q.header, multi: !!q.multiSelect, options: q.options.map(o => ({ label: o.label, value: o.label, hint: o.description || '' })) })) } })
+    if (activeNotice && !activeNotice.ask) endNotice(false)
+    pumpNotices()
+  })
+}
+function cancelLocalQuestions() {
+  for (const finish of localQuestions.values()) finish(null)
+  for (let i = askQueue.length - 1; i >= 0; i--) if (askQueue[i].local) askQueue.splice(i, 1)
+  if (activeNotice?.local) endNotice(false)
+}
+function showProviderLimit({ provider }) {
+  if (store.get().ccNotices === false) return
+  const name = provider === 'codex' ? 'Codex' : provider === 'groq' ? 'Groq' : 'Claude Code'
+  infoNotice = { companion: true, at: Date.now(), view: { id: `limit-${Date.now()}`, kind: 'limit', from: name, title: `${name} 사용 한도에 도달했어요..`, detail: '요청 한도 또는 사용량 제한입니다. 잠시 뒤 다시 시도해 주세요.' } }
+  if (activeNotice && !activeNotice.ask) endNotice(false)
+  pumpNotices()
+}
+
 /** 다음 알림을 말풍선에 띄운다. 고르기가 먼저, 캐릭터가 보일 때만. */
 function pumpNotices() {
-  if (!noticesOn()) return
-  if (!canAsk()) passPendingAsks()
+  if (!win?.isVisible() || !wantVisible() || store.get().ccAsk === false) passPendingAsks()
+  else if (!canAsk()) {
+    for (let i = askQueue.length - 1; i >= 0; i--) if (!askQueue[i].local) { noticeServer?.answer(askQueue[i].view.id, { choice: 'pass' }); askQueue.splice(i, 1) }
+  }
+  if (!noticesOn() && !askQueue.some(n => n.local) && !infoNotice?.companion) return
   if (activeNotice || !win) return
   if (infoNotice && Date.now() - infoNotice.at > INFO_STALE_MS) infoNotice = null
   if (!wantVisible() || !win.isVisible()) return // 숨어 있으면 나타날 때 보여 준다
@@ -427,6 +465,7 @@ function endNotice(pump = true) {
 /** 숨기거나 고르기를 끌 때는 대기 중인 질문 전부를 Claude Code에 돌려준다. */
 function passPendingAsks() {
   // 먼저 비운다. 말풍선을 닫는 동안 다음 질문이 다시 뜨지 않도록.
+  cancelLocalQuestions()
   askQueue.length = 0
   for (const ask of noticeServer?.pending() ?? []) noticeServer.answer(ask.id, { choice: 'pass' })
   if (activeNotice?.ask) endNotice(false)
@@ -996,6 +1035,7 @@ function cancelChat(notify = false) {
   const job = running
   running = null
   job?.cancel()
+  cancelLocalQuestions()
   if (notify && job) sendChat('chat:cancelled')
 }
 
@@ -1361,13 +1401,14 @@ function wireIpc() {
   ipcMain.on('notice:answer', (e, id, answer) => {
     if (e.sender !== bubbleWin?.webContents || !activeNotice || activeNotice.view.id !== id) return
     if (activeNotice.ask) {
-      if (!canAsk()) { passPendingAsks(); return }
+      if (!activeNotice.local && !canAsk()) { passPendingAsks(); return }
       const choice = ['allow', 'always', 'deny', 'answers', 'pass'].includes(answer?.choice) ? answer.choice : 'pass'
       const clean = { choice }
       if (choice === 'answers' && answer.answers && typeof answer.answers === 'object') {
         clean.answers = Object.fromEntries(Object.entries(answer.answers).filter(([k, v]) => typeof k === 'string' && typeof v === 'string').slice(0, 8).map(([k, v]) => [k, v.slice(0, 2000)]))
       }
-      noticeServer?.answer(id, clean)
+      if (activeNotice.local) localQuestions.get(id)?.(choice === 'answers' ? clean.answers : null)
+      else noticeServer?.answer(id, clean)
     }
     endNotice()
   })
@@ -1413,6 +1454,8 @@ function wireIpc() {
       cwd: app.getPath('userData'),
       onDelta: (_piece, whole) => { if (running === job) sendChat('chat:delta', tidy(whole)) },
       onRateLimit: info => { if (running === job) sendChat('chat:ratelimit', info) },
+      onQuestion: askCompanion,
+      onLimit: info => queueMicrotask(() => { if (running === job) showProviderLimit(info) }),
       onProvider: info => queueMicrotask(() => { if (running === job) sendChat('chat:provider', info) }),
     })
     running = job
@@ -1887,6 +1930,30 @@ async function selfTest(dir) {
       for (let i = 0; i < 100 && await bjs('busy'); i++) await wait(50)
       check(await answerReady('Hello from groq') && await bjs('providerState.provider === "groq"'), 'Both unavailable CLIs automatically complete through Groq streaming')
       await shot('bubble-groq', bubbleWin)
+      const questionSignal = JSON.stringify({ clau_question: { question: '어디에 저장할까요?', options: [{ label: '바탕화면' }, { label: '문서' }] } })
+      globalThis.fetch = async (_url, init) => {
+        const asked = JSON.parse(init.body).messages.at(-1).content
+        const content = asked.includes('사용자가 질문에 답했습니다') ? '문서에 저장할게요.' : questionSignal
+        return new Response('data: '+JSON.stringify({choices:[{delta:{content},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+      }
+      await bjs('input.value="choose-folder";form.requestSubmit()')
+      for (let i = 0; i < 80 && !activeNotice?.local; i++) await wait(25)
+      check(!!activeNotice?.local, 'Groq JSON clarification opens real choice buttons')
+      await wait(500)
+      await shot('groq-question', bubbleWin)
+      await bjs("[...document.querySelectorAll('#noticeChoices .choice')].find(b => b.textContent === '문서').click()")
+      for (let i = 0; i < 100 && await bjs('busy'); i++) await wait(25)
+      check(await answerReady('문서에 저장할게요.'), 'Groq choice resumes the same provider with the selected answer')
+      check(localQuestions.size === 0, 'Answering removes the local question waiter')
+      globalThis.fetch = async () => new Response(JSON.stringify({error:{message:'Rate limit exceeded'}}),{status:429})
+      applySettings({ providers: [{id:'groq',on:true},{id:'claude',on:false},{id:'codex',on:false}] })
+      await bjs('input.value="limit-test";form.requestSubmit()')
+      for (let i = 0; i < 80 && activeNotice?.view.kind !== 'limit'; i++) await wait(25)
+      check(activeNotice?.view.title.includes('Groq'), 'Groq usage limit gets its own notice bubble')
+      endNotice()
+      applySettings({ providers: [{id:'claude',on:true},{id:'codex',on:false},{id:'groq',on:false}] })
+      chat.clearAvailability()
+
     } finally { globalThis.fetch = originalFetch }
     await bjs('input.value="cancel me"; form.requestSubmit()')
     await wait(80)
@@ -1898,7 +1965,7 @@ async function selfTest(dir) {
   applySettings({ followClaudeCode: true, ccNotices: true, ccAsk: true, placement: 'free', position: { x: 600, y: 420 }, chatEnabled: true })
   setChatOpen(false)
   await wait(400)
-  for (const [state, at] of [['yawn', 1000], ['stretch', 500], ['surprised', 160], ['asking', 700], ['shy', 400], ['dizzy', 500], ['greet', 350], ['giggle', 200], ['oops', 300]]) {
+  for (const [state, at] of [['dozing', 1100], ['sleeping', 1100], ['yawn', 1000], ['stretch', 500], ['surprised', 160], ['asking', 700], ['shy', 400], ['dizzy', 500], ['greet', 350], ['giggle', 200], ['oops', 300]]) {
     await js(`react = null; touched = null; asking = false; setLocal(null); setLocal('${state}')`)
     await wait(at)
     await shot(`state-${state}`)
@@ -1910,6 +1977,7 @@ async function selfTest(dir) {
     check(await js(`petEl.dataset.thinking === '${variant}' && petEl.dataset.eyes === '${variant === 'up' ? 'open' : 'closed'}' && petEl.dataset.mouth === '${variant === 'up' ? 'sleep' : 'closed'}'`), `Thinking face ${variant} shows`)
     await shot(`thinking-${variant}`)
   }
+  check(await js("bodyEl.contains(imgs.hair) && !faceEl.contains(imgs.hair) && faceEl.style.transform === ''"), 'Bangs do not ride a separate face spring')
   check(await js("setLocal('shy'); petEl.dataset.blush === 'on'"), 'Shy turns the cheeks pink')
   await js('setLocal(null)')
   await wait(300)

@@ -1,5 +1,6 @@
 // Optional final fallback. The main process supplies the decrypted key only for
 // this request; it is never part of settings, prompts, URLs or emitted events.
+const { RULE } = require('./questions')
 const { NO_EMOJI_RULE } = require('./clean')
 const { cliError, rejected } = require('./cli')
 
@@ -10,7 +11,7 @@ const MAX_EVENT_CHARS = 262_144
 const MAX_ANSWER_CHARS = 32_768
 
 function messagesFor({ question, history = [], cfg }) {
-  const system = [cfg.persona, cfg.noEmoji ? NO_EMOJI_RULE : ''].filter(Boolean).join(' ')
+  const system = [cfg.persona, cfg.noEmoji ? NO_EMOJI_RULE : '', cfg.questionSignals ? RULE : ''].filter(Boolean).join(' ')
   return [
     { role: 'system', content: system },
     ...history.flatMap(turn => [{ role: 'user', content: String(turn.q) }, { role: 'assistant', content: String(turn.a) }]),

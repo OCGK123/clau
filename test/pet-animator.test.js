@@ -252,3 +252,5 @@ test('stale compositor timestamps never turn the capped loop into a full-refresh
   advance(4000)
   assert.ok(ticks >= 44 && ticks <= 50, `12fps with a stale compositor clock (${ticks / 4}fps)`)
 })
+
+test('both ordinary dozing and limited sleep show z marks, including reduced motion',()=>{const zs=[{style:{}},{style:{}},{style:{}}];PetAnimator.setPaused(false);PetAnimator.setCalm(false);PetAnimator.attach(body,buddy,{zs});for(const mode of ['dozing','sleeping']){PetAnimator.setMode(mode);run(800);assert.ok(zs.some(z=>Number(z.style.opacity)>0),mode)}PetAnimator.setCalm(true);PetAnimator.setMode('dozing');assert.ok(zs.every(z=>Number(z.style.opacity)>0));PetAnimator.setCalm(false)})

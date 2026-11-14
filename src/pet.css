@@ -275,13 +275,15 @@ body.keyboard #stage:focus-visible {
   display: none;
   position: absolute;
   font-weight: 800;
-  font-size: calc(var(--u) * 9);
+  font-size: calc(var(--u, 2.2px) * 9);
   color: #5a2d2a;
   text-shadow: -2px 0 #fff, 2px 0 #fff, 0 -2px #fff, 0 2px #fff;
   opacity: 0;
 }
+#pet.flip .z { scale: -1 1; }
 /* 떠오르는 움직임은 pet-animator.js가 그린다 */
-#pet.mode-sleeping .z {
+#pet.mode-sleeping .z,
+#pet.mode-dozing .z {
   display: block;
 }
 

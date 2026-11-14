@@ -84,9 +84,9 @@ const PetAnimator = (() => {
     petted: t => {
       const [sx, sy] = keys((t % SQUISH_S) / SQUISH_S, [
         [0, [1, 1]],
-        [0.28, [1.055, 0.92]],
-        [0.58, [0.968, 1.036]],
-        [0.8, [1.016, 0.982]],
+        [0.28, [1.05, 0.925]],
+        [0.58, [0.972, 1.032]],
+        [0.8, [1.014, 0.984]],
         [1, [1, 1]],
       ])
       return { ...ID, sx, sy }
@@ -94,7 +94,7 @@ const PetAnimator = (() => {
     // 손을 뗀 직후: 말랑 주기가 끝난 (1, 1)에서 그대로 이어진다.
     // sin으로 시작하니 첫 프레임 값이 0이고, 쭉 펴지며 살짝 떴다가 감쇠 진동으로 가라앉는다.
     pleased: (t, u) => {
-      const a = -0.06 * Math.exp(-t / 0.22) * Math.sin(t * 15)
+      const a = -0.055 * Math.exp(-t / 0.2) * Math.sin(t * 15)
       const lift = t < 0.32 ? -1.6 * u * Math.sin((Math.PI * t) / 0.32) : 0
       return { ...ID, ty: lift, sx: 1 + a * 0.7, sy: 1 - a }
     },
@@ -395,15 +395,15 @@ const PetAnimator = (() => {
 
   function drawZs(at) {
     if (!zs.length) return false
-    const on = mode === 'sleeping' && !calm
+    const on = mode === 'sleeping' || mode === 'dozing'
     if (!on) {
       for (const z of zs) if (z.drawn !== null) { z.node.style.opacity = ''; z.node.style.translate = ''; z.drawn = null }
       return false
     }
     const t = at / 1000
     zs.forEach((z, i) => {
-      const p = (((t - i * 1.2) % 3.6) + 3.6) % 3.6 / 3.6
-      const opacity = p < 0.15 ? p / 0.15 : 1 - (p - 0.15) / 0.85
+      const p = calm ? 0.2 + i * 0.25 : (((t - i * 1.2) % 3.6) + 3.6) % 3.6 / 3.6
+      const opacity = calm ? 0.8 : p < 0.15 ? p / 0.15 : 1 - (p - 0.15) / 0.85
       const e = 1 - (1 - p) ** 2
       const key = `${opacity.toFixed(2)}/${(e * 8 * unit).toFixed(1)}`
       if (key === z.drawn) return
@@ -411,7 +411,7 @@ const PetAnimator = (() => {
       z.node.style.translate = `${(e * 8 * unit).toFixed(1)}px ${(-e * 16 * unit).toFixed(1)}px`
       z.drawn = key
     })
-    return true
+    return !calm
   }
 
   function fpsFor(at, faceBusy) {
@@ -539,6 +539,7 @@ const PetAnimator = (() => {
       if (next === mode && !force) return
       mode = next
       const at = now()
+      drawZs(at)
       for (const tr of tracks) {
         // 지금 화면에 보이는 모습에서 출발해야 툭 튀지 않는다.
         tr.from = tr.last
@@ -577,7 +578,8 @@ const PetAnimator = (() => {
         tr.kicks = []
       }
       // 맞는 순간 꾹: 위에서 누른 듯 납작해졌다 튕겨 오른다(젤리처럼 두어 번 출렁).
-      tracks[0]?.kicks.push({ fn: jellyKick(0.04, 0.1, 24), ms: 380, start: at })
+      const punch = t => { const a = 0.035 * Math.exp(-t / 0.08) * Math.sin(t * 26); return { ...ID, sx: 1 + a * 0.8, sy: 1 - a } }
+      tracks[0]?.kicks.push({ fn: punch, ms: 300, start: at })
       wakeLoop()
     },
     /** 지금 동작 위에 말랑한 출렁임을 한 번 얹는다(말풍선이 열릴 때, 내려놓을 때 등). */
