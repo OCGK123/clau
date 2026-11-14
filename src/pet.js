@@ -40,7 +40,7 @@ const HINT = '안녕! 난 클로야. 만나서 반가워!!!!!!'
 const HEART = '<svg viewBox="0 0 20 18"><path d="M10 16.6C4.2 12.3 1.2 9.5 1.2 6a4.5 4.5 0 0 1 8.8-1.4A4.5 4.5 0 0 1 18.8 6c0 3.5-3 6.3-8.8 10.6z"/></svg>'
 
 // 그리는 순서: 작은 친구 → 몸 → 눈 → 입 → 앞머리
-const BODY_ROLES = ['base', 'eyes_open', 'eyes_closed', 'eyes_happy', 'eyes_x', 'eyes_petted', 'mouth_closed', 'mouth_open', 'mouth_sleep', 'mouth_pout', 'hair']
+const BODY_ROLES = ['base', 'eyes_open', 'eyes_closed', 'eyes_happy', 'eyes_x', 'eyes_petted', 'mouth_closed', 'mouth_open', 'mouth_sleep', 'hair']
 
 let cfg
 let layers
@@ -57,7 +57,6 @@ const imgs = {}
 let faceEl = null // 눈·입·앞머리·볼을 묶은 상자: 몸이 뛰면 살짝 늦게 따라와 출렁인다
 let markLayer = null // 머리 위 작은 표시(!, ?, 땀방울)
 let blushEl = null
-const POUT = '<svg viewBox="0 0 44 28" width="100%" height="100%" aria-hidden="true"><path d="M6 9 35 6v15" fill="none" stroke="#3f1909" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 const BLUSH = '<svg viewBox="0 0 306 72" width="100%" height="100%" aria-hidden="true"><defs><radialGradient id="blushFill"><stop offset="0" stop-color="#ff7f91" stop-opacity="0.78"/><stop offset="0.7" stop-color="#ff8c9b" stop-opacity="0.45"/><stop offset="1" stop-color="#ff8c9b" stop-opacity="0"/></radialGradient></defs><ellipse cx="61" cy="34" rx="31" ry="16" fill="url(#blushFill)"/><ellipse cx="251" cy="34" rx="31" ry="16" fill="url(#blushFill)"/><g stroke="#c24a57" stroke-width="3.2" stroke-linecap="round"><path d="M45 41l6-12M56 41l6-12M67 41l6-12M235 41l6-12M246 41l6-12M257 41l6-12"/></g></svg>'
 
 const rand = (lo, hi) => lo + Math.random() * (hi - lo)
@@ -69,18 +68,9 @@ function viewRect() {
 
 function build() {
   const make = (role, parent, cls) => {
-    const layerRole = role === 'eyes_petted' ? 'eyes_x' : role === 'mouth_pout' ? 'mouth_closed' : role
+    const layerRole = role === 'eyes_petted' ? 'eyes_x' : role
     if (!layers.layers[layerRole]) return
     if (role === 'eyes_open') return makeEyes(parent, cls)
-    if (role === 'mouth_pout') {
-      const mouth = document.createElement('div')
-      mouth.dataset.role = role
-      mouth.className = cls
-      mouth.innerHTML = POUT
-      parent.appendChild(mouth)
-      imgs[role] = mouth
-      return
-    }
     const img = document.createElement('img')
     img.dataset.role = role
     img.className = cls
@@ -180,10 +170,7 @@ function layout() {
   }
   for (const role of BODY_ROLES) {
     if (!imgs[role]) continue
-    if (role === 'mouth_pout') {
-      const [x, y, w] = layers.layers.mouth_closed
-      put(imgs[role], [x, y - 4, w, w * 28 / 44])
-    } else put(imgs[role], layers.layers[role === 'eyes_petted' ? 'eyes_x' : role])
+    put(imgs[role], layers.layers[role === 'eyes_petted' ? 'eyes_x' : role])
   }
   // 작은 친구는 둥실거리는 상자째로 자리를 잡는다.
   if (layers.layers.buddy) put(buddyEl, layers.layers.buddy)
@@ -454,7 +441,8 @@ function applyFace() {
     held: 'x', thinking: 'closed', sleeping: 'closed', dozing: 'closed', happy: 'happy', pleased: 'happy', oops: 'x', petted: 'petted',
     yawn: 'closed', stretch: 'closed', shy: 'happy', dizzy: 'x', greet: 'happy', giggle: 'happy',
   }[mode] ?? 'open'
-  const mouth = thinkingUp ? 'pout' : { sleeping: 'sleep', oops: 'sleep', dizzy: 'sleep', yawn: 'yawn', stretch: 'small', surprised: 'small', greet: 'open', giggle: 'open' }[mode] ?? 'closed'
+  // mouth_sleep는 원본 Die.png에서 만든 입 레이어다. 고민할 때도 같은 원화를 쓴다.
+  const mouth = thinkingUp ? 'sleep' : { sleeping: 'sleep', oops: 'sleep', dizzy: 'sleep', yawn: 'yawn', stretch: 'small', surprised: 'small', greet: 'open', giggle: 'open' }[mode] ?? 'closed'
   const changed = petEl.dataset.eyes !== eyes
   petEl.dataset.eyes = eyes
   petEl.dataset.mouth = mouth

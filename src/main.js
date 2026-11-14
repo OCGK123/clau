@@ -565,6 +565,8 @@ function startTracker() {
     setOnTop()
     place()
     syncVisibility()
+    syncInput()
+    syncLook()
   }, 3000)
   tracker = trackers.create({
     target: store.get().targetAppSelection || store.get().targetApp,
@@ -600,6 +602,8 @@ function startTracker() {
       setOnTop()
       place()
       syncVisibility()
+      syncInput()
+      syncLook()
     },
   })
 }
@@ -621,7 +625,18 @@ function sendLook(point) {
   win.webContents.send('pet:look', { x, y })
 }
 
-/** 켜져 있고 보이는 동안만 마우스를 살핀다. KDE(Wayland)는 창 관리자 스크립트가 알려 준다. */
+/**
+ * KWin tracks window geometry even when Electron runs through XWayland. That
+ * does not mean it owns pointer hit testing: x11 has a usable native pointer,
+ * and Linux does not forward mouse moves through an ignored BrowserWindow.
+ * Reserve the compositor-only pointer path for genuinely native Wayland.
+ */
+function usesKwinCursor() {
+  return tracker?.kind === 'kwin' && !trackError && process.platform === 'linux' &&
+    process.env.XDG_SESSION_TYPE === 'wayland' && !process.argv.includes(X11_FLAG)
+}
+
+/** 켜져 있고 보이는 동안만 마우스를 살핀다. 네이티브 Wayland만 KWin의 마우스 소식을 쓴다. */
 // 눈동자는 0.14초 동안 부드럽게 따라가므로(pet.css) 1초에 20번이면 충분하다. 배터리로 돌 땐 그 절반.
 const LOOK_FAST_MS = 50
 const LOOK_SLOW_MS = 250
@@ -635,7 +650,7 @@ function syncLook() {
     lastLook = ''
     return
   }
-  if (tracker?.kind === 'kwin' && !trackError) return
+  if (usesKwinCursor()) return
   // 마우스가 움직이는 동안은 1초에 20번, 1초 넘게 멈춰 있으면 4번 묻는다(배터리로 돌 땐 각각 절반).
   // 계속 자주 깨우면 마우스를 안 쓰는 동안에도 CPU가 쉬지 못한다.
   let still = 0
@@ -663,8 +678,10 @@ function petRect() {
 function cursorOverPet() {
   // 화면(렌더러)이 캐릭터 위에 마우스가 있다고 알려 왔으면 그걸 믿는다. 가장 빠르고 정확하다.
   if (rendererHover) return true
-  // Wayland에서는 앱이 화면 전체의 마우스 위치를 알 수 없어서, 창 관리자가 알려 준 값을 쓴다.
-  if (tracker?.kind === 'kwin' && !trackError) return !!track.hover
+  // XWayland에서도 정상 KWin hover를 함께 쓴다: 네이티브 Wayland 창 위에서는
+  // X11 전역 마우스 좌표가 잠시 오래된 값일 수 있다. hover가 없으면 X11 좌표로 회복한다.
+  if (tracker?.kind === 'kwin' && !trackError && track.hover) return true
+  if (usesKwinCursor()) return false
   const p = screen.getCursorScreenPoint()
   const r = petRect()
   return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height
@@ -689,9 +706,9 @@ function syncInput() {
   inputTimer = null
   if (!win) return
   const cfg = store.get()
-  if (cfg.locked && win.isVisible() && !expanded && !activeNotice && !menuOpen && tracker?.kind !== 'kwin') inputTimer = setTimeout(syncInput, inputPollMs())
+  if (cfg.locked && win.isVisible() && !expanded && !activeNotice && !menuOpen && !usesKwinCursor()) inputTimer = setTimeout(syncInput, inputPollMs())
   // 마우스 이동을 화면으로 전달할 수 없는 Linux에서는 캐릭터에 닿았는지 직접 살핀다.
-  else if (!cfg.locked && process.platform === 'linux' && win.isVisible() && tracker?.kind !== 'kwin') inputTimer = setTimeout(syncInput, inputPollMs())
+  else if (!cfg.locked && process.platform === 'linux' && win.isVisible() && !usesKwinCursor()) inputTimer = setTimeout(syncInput, inputPollMs())
   if (TESTING || pointerHeld || dragFrom) {
     armed = true // 누르고 있는 동안 놓치면 손을 뗀 걸 모른다
     hoverSince = 0
@@ -712,7 +729,7 @@ function syncInput() {
       // 대화나 쓰다듬기를 허용했다면 바로, 아니면 잠깐 머문 뒤에.
       const dwell = (cfg.chatEnabled && cfg.lockedChat) || (cfg.petting && cfg.lockedPetting) ? 0 : LOCK_DWELL_MS
       armed = Date.now() - hoverSince >= dwell
-      if (!armed && tracker?.kind === 'kwin') inputTimer = setTimeout(syncInput, Math.max(1, dwell - (Date.now() - hoverSince)))
+      if (!armed && usesKwinCursor()) inputTimer = setTimeout(syncInput, Math.max(1, dwell - (Date.now() - hoverSince)))
     }
   }
   const text = `${cfg.locked}/${armed}`
@@ -1890,7 +1907,7 @@ async function selfTest(dir) {
   for (const [variant, roll] of [['closed', 0.1], ['up', 0.9]]) {
     await js(`(() => { const random = Math.random; try { Math.random = () => ${roll}; react = null; touched = null; asking = false; setLocal('idle'); setLocal('thinking') } finally { Math.random = random } })()`)
     await wait(650)
-    check(await js(`petEl.dataset.thinking === '${variant}' && petEl.dataset.eyes === '${variant === 'up' ? 'open' : 'closed'}' && petEl.dataset.mouth === '${variant === 'up' ? 'pout' : 'closed'}'`), `Thinking face ${variant} shows`)
+    check(await js(`petEl.dataset.thinking === '${variant}' && petEl.dataset.eyes === '${variant === 'up' ? 'open' : 'closed'}' && petEl.dataset.mouth === '${variant === 'up' ? 'sleep' : 'closed'}'`), `Thinking face ${variant} shows`)
     await shot(`thinking-${variant}`)
   }
   check(await js("setLocal('shy'); petEl.dataset.blush === 'on'"), 'Shy turns the cheeks pink')

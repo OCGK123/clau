@@ -412,7 +412,7 @@ test('battery changes keep idle breathing and the mouth pop, with both rendered 
 })
 
 test('thinking selects the original face or the upward-looking pout with the same body motion and spinner', async () => {
-  for (const [random, variant, eyes, mouth] of [[0.1, 'closed', 'closed', 'closed'], [0.9, 'up', 'open', 'pout']]) {
+  for (const [random, variant, eyes, mouth] of [[0.1, 'closed', 'closed', 'closed'], [0.9, 'up', 'open', 'sleep']]) {
     const r = await renderer()
     r.evaluate(`Math.random = () => ${random}; setLocal('thinking')`)
     assert.equal(r.elements.pet.dataset.thinking, variant)
@@ -423,7 +423,7 @@ test('thinking selects the original face or the upward-looking pout with the sam
     if (variant === 'up') {
       assert.ok(Number(r.elements.pet.style['--look-y'].replace('px', '')) < -3, 'pupils visibly look up')
       assert.equal(r.elements.pet.style['--look-x'], '0px')
-      assert.ok(r.evaluate('imgs.mouth_pout.innerHTML').includes('M6 9 35 6v15'), 'the new mouth has an angled top and a downturned right corner')
+      assert.equal(r.evaluate('imgs.mouth_sleep.src'), '../assets/mouth_sleep.png', 'thinking uses the original Die.png mouth asset')
       r.callbacks.Look({ x: -2000, y: 3000 })
       assert.ok(Number(r.elements.pet.style['--look-y'].replace('px', '')) < -3, 'the thinking pose does not follow the mouse away')
     }
@@ -438,7 +438,7 @@ test('the chosen thinking face survives state refresh, layout, flips, reduced mo
   r.callbacks.Cfg({ ...r.evaluate('cfg'), flip: true, reduceMotion: true, lookAtCursor: false, size: 420 })
   r.callbacks.Layout({ ...r.geometry, shape: r.evaluate('currentShape()') })
   assert.equal(r.elements.pet.dataset.thinking, 'up')
-  assert.equal(r.elements.pet.dataset.mouth, 'pout')
+  assert.equal(r.elements.pet.dataset.mouth, 'sleep')
   assert.equal(r.elements.pet.classes.has('flip'), true)
   assert.notEqual(r.elements.pet.style['--look-y'], before, 'the raised gaze scales with the character')
   assert.ok(Number(r.elements.pet.style['--look-y'].replace('px', '')) < 0, 'reduced motion keeps the expression as a static pose')
@@ -447,7 +447,7 @@ test('the chosen thinking face survives state refresh, layout, flips, reduced mo
   r.callbacks.Visibility(true)
   assert.equal(r.elements.pet.dataset.thinking, 'up')
   assert.equal(r.elements.pet.dataset.eyes, 'open')
-  assert.equal(r.elements.pet.dataset.mouth, 'pout')
+  assert.equal(r.elements.pet.dataset.mouth, 'sleep')
   r.evaluate("setLocal('idle')")
   assert.equal(r.elements.pet.dataset.thinking, '')
   assert.equal(r.elements.pet.dataset.mouth, 'closed')

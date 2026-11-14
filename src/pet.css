@@ -90,16 +90,6 @@ body.keyboard #stage:focus-visible {
   translate: var(--look-x, 0px) var(--look-y, 0px);
   transition: translate 0.14s ease-out;
 }
-#pet [data-role='mouth_pout'] {
-  position: absolute;
-  pointer-events: none;
-}
-#pet [data-role='mouth_pout'] svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
 .reduce-motion .eye-iris {
   transition: none;
 }
@@ -180,8 +170,7 @@ body.keyboard #stage:focus-visible {
 #pet[data-eyes='petted'] [data-role='eyes_petted'],
 #pet[data-mouth='closed'] [data-role='mouth_closed'],
 #pet[data-mouth='open'] [data-role='mouth_open'],
-#pet[data-mouth='sleep'] [data-role='mouth_sleep'],
-#pet[data-mouth='pout'] [data-role='mouth_pout'] {
+#pet[data-mouth='sleep'] [data-role='mouth_sleep'] {
   visibility: visible;
 }
 
