@@ -81,6 +81,38 @@ function adhocSign(app) {
   execFileSync('codesign', ['--verify', '--deep', '--strict', app])
 }
 
+// HFS+ 볼륨 헤더는 볼륨 앞 1024바이트 뒤에 있고, finderInfo(8칸 x 4바이트)는 그 안 80바이트째부터다.
+// finderInfo[2]는 '붙이면 열 폴더'의 번호다. 루트 폴더 번호는 언제나 2.
+const HFS_HEADER = 1024
+const OPEN_FOLDER_AT = HFS_HEADER + 80 + 2 * 4
+function markOpenFolder(image) {
+  // 파일 시스템을 붙이지 않고 장치만 붙인다(-nomount). -layout NONE이라 장치의 0바이트가 곧 볼륨의 시작이다.
+  const out = execFileSync('hdiutil', ['attach', image, '-nomount', '-noverify', '-noautoopen'], { encoding: 'utf8' })
+  const device = out.trim().split(/\s+/)[0]
+  if (!/^\/dev\/disk\d+$/.test(device)) throw new Error(`DMG 장치를 찾지 못했어요: ${out}`)
+  try {
+    const raw = device.replace('/dev/disk', '/dev/rdisk')
+    const block = Buffer.alloc(4096)
+    const fd = fs.openSync(raw, 'r+')
+    try {
+      // 원시 장치는 블록 단위로만 읽고 쓸 수 있어서 앞 4KB를 통째로 고쳐 쓴다.
+      fs.readSync(fd, block, 0, block.length, 0)
+      const signature = block.toString('ascii', HFS_HEADER, HFS_HEADER + 2)
+      if (signature !== 'H+' && signature !== 'HX') throw new Error(`HFS+ 볼륨이 아니에요: ${signature}`)
+      block.writeUInt32BE(2, OPEN_FOLDER_AT)
+      fs.writeSync(fd, block, 0, block.length, 0)
+      fs.fsyncSync(fd)
+      const check = Buffer.alloc(4096)
+      fs.readSync(fd, check, 0, check.length, 0)
+      if (check.readUInt32BE(OPEN_FOLDER_AT) !== 2) throw new Error('열 폴더 표시가 저장되지 않았어요')
+    } finally {
+      fs.closeSync(fd)
+    }
+  } finally {
+    execFileSync('hdiutil', ['detach', device, '-quiet'])
+  }
+}
+
 function makeDmg(app, target) {
   const stage = path.join(dist, 'build', `dmg-${target.name}`)
   fs.rmSync(stage, { recursive: true, force: true })
@@ -91,18 +123,11 @@ function makeDmg(app, target) {
   const dmg = path.join(dist, `Clau-${target.name}.dmg`)
   const rw = path.join(dist, 'build', `Clau-${target.name}-rw.dmg`)
   fs.rmSync(dmg, { force: true })
-  // 쓰기 가능한 이미지로 먼저 만들고, 열자마자 Finder 창이 뜨도록 표시(bless --openfolder)한 뒤 압축한다.
+  // 쓰기 가능한 이미지로 먼저 만들고, 열자마자 Finder 창이 뜨도록 표시한 뒤 압축한다.
   // 이 표시가 없으면 맥 설정에 따라 더블클릭해도 디스크만 조용히 붙고 아무 창도 안 뜬다.
-  execFileSync('hdiutil', ['create', '-volname', 'Clau', '-srcfolder', stage, '-fs', 'HFS+', '-format', 'UDRW', '-ov', rw])
-  const mount = fs.mkdtempSync(path.join(dist, 'build', 'mnt-'))
-  execFileSync('hdiutil', ['attach', rw, '-mountpoint', mount, '-nobrowse', '-noautoopen', '-quiet'])
-  try {
-    execFileSync('bless', ['--folder', mount, '--openfolder', mount])
-  } catch (err) {
-    console.warn(`(bless 실패: DMG를 열어도 창이 자동으로 뜨지 않을 수 있어요) ${err.message}`)
-  } finally {
-    execFileSync('hdiutil', ['detach', mount, '-quiet'])
-  }
+  // bless --openfolder는 Apple Silicon에서 막혀 있어서, HFS+ 볼륨 헤더의 해당 칸을 직접 적는다.
+  execFileSync('hdiutil', ['create', '-volname', 'Clau', '-srcfolder', stage, '-fs', 'HFS+', '-layout', 'NONE', '-format', 'UDRW', '-ov', rw])
+  markOpenFolder(rw)
   execFileSync('hdiutil', ['convert', rw, '-format', 'UDZO', '-imagekey', 'zlib-level=9', '-o', dmg])
   fs.rmSync(rw, { force: true })
   console.log(`→ ${path.relative(root, dmg)}  (${(fs.statSync(dmg).size / 1e6).toFixed(0)} MB)`)

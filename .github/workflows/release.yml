@@ -86,6 +86,11 @@ jobs:
             codesign --verify --deep --strict "$mnt/Clau.app"
             test -L "$mnt/Applications"
             hdiutil detach "$mnt" -quiet
+            # 열면 Finder 창이 뜨는 표시(HFS+ finderInfo[2] = 루트 폴더 2)가 들어 있는지 본다.
+            dev="$(hdiutil attach "$dmg" -nomount -noverify -noautoopen | awk 'NR==1{print $1}')"
+            mark="$(dd if="${dev/disk/rdisk}" bs=4096 count=1 2>/dev/null | xxd -s 1112 -l 4 -p)"
+            hdiutil detach "$dev" -quiet
+            test "$mark" = "00000002"
           done
       - name: Upload DMGs
         env:

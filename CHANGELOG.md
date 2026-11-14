@@ -1,6 +1,10 @@
+# Clau 0.7.9
+
+- macOS DMG를 열면 Clau와 Applications 폴더가 보이는 Finder 창이 바로 뜹니다. 맥 설정에 따라 더블클릭해도 디스크만 조용히 붙고 아무 창도 뜨지 않던 문제를 고쳤습니다. (0.7.8에서 쓴 방법은 Apple Silicon에서 막혀 실제로는 적용되지 않았습니다.)
+
 # Clau 0.7.8
 
-- macOS DMG를 열면 Clau와 Applications 폴더가 보이는 Finder 창이 바로 뜹니다. 맥 설정에 따라 더블클릭해도 디스크만 조용히 붙고 아무 창도 뜨지 않던 문제를 고쳤습니다.
+- macOS DMG를 더 작게 압축합니다.
 
 # Clau 0.7.7
 
