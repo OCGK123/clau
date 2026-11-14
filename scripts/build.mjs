@@ -48,6 +48,11 @@ for (const target of picks) {
     ignore: [/^\/dist($|\/)/, /^\/scripts($|\/)/, /^\/test($|\/)/, /^\/\.git($|\/)/, /^\/\.github($|\/)/, /\.test\.ts$/, /^\/README/, /^\/CHANGELOG/, /^\/install\.(sh|ps1)$/, /^\/\.claude($|\/)/],
   })
 
+  // macOS에서 빌드하면 이 자리에서 바로 서명(ad-hoc)한다. 서명이 없으면 Apple Silicon 맥은 앱을 아예 열지 않는다.
+  // 다른 운영체제에서 만든 맥 앱은 Install.command가 설치할 때 서명한다.
+  const macApp = target.platform === 'darwin' ? path.join(appDir, 'Clau.app') : null
+  if (macApp && process.platform === 'darwin') adhocSign(macApp)
+
   // 배포 폴더: 앱 + 설치 스크립트 + 읽어보기
   const bundle = path.join(dist, `Clau-${target.name}`)
   fs.rmSync(bundle, { recursive: true, force: true })
@@ -60,8 +65,33 @@ for (const target of picks) {
   const zip = `${bundle}.zip`
   fs.rmSync(zip, { force: true })
   // -y: 심볼릭 링크를 링크 그대로 담는다(맥 앱에 필요). 실행 권한도 보존된다.
-  execFileSync('zip', ['-qry', zip, path.basename(bundle)], { cwd: dist })
+  // Windows에는 zip 명령이 없다. 대신 Windows 10부터 들어 있는 tar(bsdtar)로 zip을 만든다.
+  if (process.platform === 'win32') execFileSync('tar', ['-a', '-cf', path.basename(zip), path.basename(bundle)], { cwd: dist })
+  else execFileSync('zip', ['-qry', zip, path.basename(bundle)], { cwd: dist })
   console.log(`→ ${path.relative(root, zip)}  (${(fs.statSync(zip).size / 1e6).toFixed(0)} MB)`)
+
+  // 드래그해서 넣는 DMG: 응용 프로그램 폴더로 끌어다 놓기만 하면 된다. hdiutil이 있는 macOS에서만 만든다.
+  if (macApp && process.platform === 'darwin') makeDmg(macApp, target)
+}
+
+function adhocSign(app) {
+  // 받은 파일 표시(격리)를 떼고, 안쪽(프레임워크·도우미 앱)부터 바깥까지 이 자리에서 서명한다.
+  execFileSync('xattr', ['-cr', app])
+  execFileSync('codesign', ['--force', '--deep', '--sign', '-', app])
+  execFileSync('codesign', ['--verify', '--deep', '--strict', app])
+}
+
+function makeDmg(app, target) {
+  const stage = path.join(dist, 'build', `dmg-${target.name}`)
+  fs.rmSync(stage, { recursive: true, force: true })
+  fs.mkdirSync(stage, { recursive: true })
+  fs.cpSync(app, path.join(stage, 'Clau.app'), { recursive: true, verbatimSymlinks: true })
+  fs.symlinkSync('/Applications', path.join(stage, 'Applications'))
+  fs.copyFileSync(path.join(root, 'scripts', 'install', 'mac', '열리지 않을 때.txt'), path.join(stage, '열리지 않을 때.txt'))
+  const dmg = path.join(dist, `Clau-${target.name}.dmg`)
+  fs.rmSync(dmg, { force: true })
+  execFileSync('hdiutil', ['create', '-volname', 'Clau', '-srcfolder', stage, '-fs', 'HFS+', '-format', 'UDZO', '-ov', dmg])
+  console.log(`→ ${path.relative(root, dmg)}  (${(fs.statSync(dmg).size / 1e6).toFixed(0)} MB)`)
 }
 
 fs.rmSync(path.join(dist, 'build'), { recursive: true, force: true })

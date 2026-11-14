@@ -953,6 +953,7 @@ function openSetup() {
   guardRenderer(setupWin, { name: 'setup', log: logProblem, onGiveUp: () => setupWin?.destroy() })
   setupWin.on('closed', () => {
     setupWin = null
+    if (!store.get().setupShown) store.set({ setupShown: true }) // 닫기·건너뛰기도 거친 것으로 본다
     win?.webContents.send('pet:hello') // 마법사를 닫으면 클로가 인사하며 맞는다
   })
 }
@@ -2206,6 +2207,32 @@ if (!TESTING) {
   process.on('unhandledRejection', reason => logProblem(`unhandled rejection: ${reason?.stack || reason}`))
 }
 
+/** @returns {Promise<boolean>} 옮겨서 다시 시작하는 중이면 true */
+async function offerMoveToApplications() {
+  if (process.platform !== 'darwin' || !app.isPackaged || TESTING) return false
+  try {
+    if (app.isInApplicationsFolder()) return false
+    app.focus({ steal: true }) // Dock 아이콘 없는 앱이라, 앞으로 가져오지 않으면 물음 창이 뒤에 숨는다
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['응용 프로그램 폴더로 옮기기', '그냥 열기'],
+      defaultId: 0,
+      cancelId: 1,
+      message: '클로를 응용 프로그램 폴더로 옮길까요?',
+      detail: '지금 자리(DMG나 다운로드 폴더)에서는 업데이트와 자동 시작이 제대로 되지 않아요. 옮기면 클로가 다시 열려요.',
+    })
+    if (response !== 0) return false
+    // 권한이 필요하면 macOS가 암호를 묻는다. 성공하면 Electron이 옮긴 앱을 다시 띄우고 이 앱은 끝난다.
+    return app.moveToApplicationsFolder({
+      conflictHandler: kind => kind === 'existsAndRunning' ? false : true, // 이미 떠 있는 클로가 있으면 덮어쓰지 않는다
+    })
+  } catch (err) {
+    logProblem(`move to Applications failed: ${err?.message || err}`)
+    dialog.showErrorBox('옮기지 못했어요', `응용 프로그램 폴더로 직접 끌어다 놓아 주세요.\n\n${err?.message || err}`)
+    return false
+  }
+}
+
 function onSecondLaunch(argv) {
   if (argv.includes('--cleanup')) { cleanup(); return app.quit() }
   if (argv.includes('--quit')) return app.quit()
@@ -2231,7 +2258,10 @@ if (!app.requestSingleInstanceLock()) {
   app.exit(0)
 } else {
   app.on('second-instance', (_e, argv) => onSecondLaunch(argv))
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    // macOS: DMG 안이나 다운로드 폴더에서 바로 열면 응용 프로그램 폴더로 옮기자고 묻는다.
+    // 그 자리에서는 앱이 임시 위치(App Translocation)에서 돌아 업데이트·자동 실행·Claude Code 연결이 깨진다.
+    if (await offerMoveToApplications()) return
     store.init(app.getPath('userData'))
     problems = createProblemLog(app.getPath('userData'))
     app.on('child-process-gone', (_e, details) => {
@@ -2254,7 +2284,8 @@ if (!app.requestSingleInstanceLock()) {
       try {
         if (modConnected()) copyMod()
       } catch {}
-      if (process.argv.includes('--setup')) openSetup()
+      // 처음 켤 때(DMG로 끌어다 놓은 경우처럼 설치 스크립트를 거치지 않아도) 설치 마법사를 연다.
+      if (process.argv.includes('--setup') || !store.get().setupShown) openSetup()
       else if (process.argv.includes('--settings')) openSettings()
       if (process.argv.includes('--update')) installUpdate()
       else scheduleUpdateCheck()

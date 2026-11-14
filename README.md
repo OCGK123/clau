@@ -4,6 +4,21 @@
 
 ## 설치
 
+### macOS: DMG (끌어다 놓기)
+
+[릴리스](https://github.com/OCGK123/clau/releases/latest)에서 내 맥에 맞는 DMG를 받습니다. Apple Silicon(M1 이후)은 `Clau-mac-apple-silicon.dmg`, Intel 맥은 `Clau-mac-intel.dmg`입니다.
+
+1. DMG를 열고 **Clau**를 옆의 **Applications** 폴더로 끌어다 놓습니다.
+2. 응용 프로그램 폴더에서 Clau를 엽니다. 처음 열면 설치 마법사가 뜹니다.
+
+Apple 공증을 받지 않은 앱이라 처음 한 번은 macOS가 막을 수 있습니다. 그럴 때는 **시스템 설정 → 개인정보 보호 및 보안**의 **그래도 열기**를 누르거나, 터미널에서 아래 줄을 실행한 뒤 다시 엽니다. DMG 안의 `열리지 않을 때.txt`에도 같은 안내가 있습니다.
+
+```bash
+xattr -cr /Applications/Clau.app && codesign --force --deep --sign - /Applications/Clau.app
+```
+
+DMG 안에서 바로 열면 응용 프로그램 폴더로 옮길지 묻습니다. 옮겨야 업데이트, 자동 시작, Claude Code 연결이 제대로 동작합니다.
+
 ### 설치 도우미 (파일 하나, 창으로)
 
 [릴리스](https://github.com/OCGK123/clau/releases/latest)에서 내 컴퓨터용 파일 하나를 받아 여세요. 설치, 업데이트, 고치기(다시 설치), 삭제, 열기를 모두 이 창에서 합니다.
@@ -201,7 +216,7 @@ npm install
 npm start            # Electron 앱 실행
 npm test             # 채팅, 설정, 앱 식별자, 물리·효과음, SVG 모핑·창 수명 검사
 npm run test:ui      # 임시 프로필에서 별도 대화 창과 캐릭터 위치 고정 검사
-npm run build        # dist/에 Linux, Windows, macOS(Apple Silicon·Intel) zip과 latest.json
+npm run build        # dist/에 Linux, Windows, macOS(Apple Silicon·Intel) zip과 latest.json. 맥에서 빌드하면 서명된 DMG도 만든다
 npm run build:linux  # 하나만: build:linux | build:win | build:mac
 ```
 

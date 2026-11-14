@@ -10,7 +10,30 @@ concurrency:
   group: release-clau
   cancel-in-progress: false
 jobs:
+  # 세 운영체제 모두에서 테스트가 통과해야 배포한다.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # 설치 스크립트 문법 검사: 줄바꿈이 깨지거나 오타가 있으면 여기서 걸린다.
+      - if: runner.os != 'Windows'
+        run: |
+          sh -n scripts/install/mac/Install.command
+          sh -n scripts/install/linux/install.sh
+          sh -n scripts/launcher/clau-installer.sh
   release:
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -40,3 +63,36 @@ jobs:
           fi
           gh release upload "$tag" dist/Clau-*.zip dist/Clau-Installer-* dist/latest.json --clobber
           gh release edit "$tag" --draft=false --latest
+  # 맥 DMG: 서명(ad-hoc)과 hdiutil이 필요해서 맥에서 만든다. 끌어다 놓기만 하면 설치된다.
+  mac-dmg:
+    needs: release
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: node scripts/build.mjs mac
+      - name: Check the apps open on this Mac
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dmg in dist/Clau-mac-*.dmg; do
+            mnt="$(mktemp -d)"
+            hdiutil attach "$dmg" -mountpoint "$mnt" -nobrowse -quiet
+            codesign --verify --deep --strict "$mnt/Clau.app"
+            test -L "$mnt/Applications"
+            hdiutil detach "$mnt" -quiet
+          done
+      - name: Upload DMGs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          gh release upload "v$version" dist/Clau-mac-*.dmg --clobber

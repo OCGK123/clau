@@ -1,7 +1,7 @@
 {
   "name": "clau",
   "productName": "Clau",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "앱 창 한쪽에 사는 작은 친구. Claude와 Codex로 대화하고 손길에 반응해요.",
   "main": "src/main.js",
   "private": true,

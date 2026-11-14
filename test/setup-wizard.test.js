@@ -33,7 +33,7 @@ test('the wizard only writes settings the store knows', () => {
 
 test('main opens the wizard for --setup, both at start and from a second launch', () => {
   const main = read('src/main.js')
-  assert.match(main, /process\.argv\.includes\('--setup'\)\) openSetup\(\)/)
+  assert.match(main, /process\.argv\.includes\('--setup'\) \|\| !store\.get\(\)\.setupShown\) openSetup\(\)/)
   assert.match(main, /argv\.includes\('--setup'\)\) return openSetup\(\)/)
   assert.match(main, /ipcMain\.on\('setup:done', e => \{\n\s+if \(e\.sender === setupWin\?\.webContents\)/)
   assert.match(read('src/preload.js'), /finishSetup: \(\) => ipcRenderer\.send\('setup:done'\)/)
@@ -49,4 +49,19 @@ test('installers open the wizard only on a fresh install', () => {
   const ps = read('scripts/launcher/Clau-Installer-Windows.cmd')
   assert.match(ps, /\$fresh = -not \(Test-Path -LiteralPath \$Exe\)\n\s+Stop-Clau/)
   assert.match(ps, /if \(\$fresh\) \{\n\s+Start-Process -FilePath \$Exe -ArgumentList '--setup'/)
+})
+
+test('the wizard opens on a brand-new install, but not for people upgrading from before it existed', () => {
+  const os = require('node:os')
+  const store = require(path.join(root, 'src/settings-store.js'))
+  const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'clau-setup-'))
+  assert.equal(store.init(fresh).setupShown, false, 'no settings file: show the wizard')
+  store.set({ setupShown: true })
+  assert.equal(store.init(fresh).setupShown, true, 'remembered after closing it')
+  assert.equal(store.reset().setupShown, true, 'resetting settings does not bring it back')
+
+  const old = fs.mkdtempSync(path.join(os.tmpdir(), 'clau-setup-'))
+  fs.writeFileSync(path.join(old, 'settings.json'), JSON.stringify({ size: 300 }))
+  assert.equal(store.init(old).setupShown, true, 'an existing user is not asked again')
+  for (const dir of [fresh, old]) fs.rmSync(dir, { recursive: true, force: true })
 })

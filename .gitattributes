@@ -1,0 +1,19 @@
+# 어느 운영체제에서 받아도 줄바꿈이 같게 둔다.
+# Windows의 git은 기본으로 LF를 CRLF로 바꿔 받는데, 그러면 셸 스크립트 첫 줄(#!/bin/sh)이 깨져 맥·리눅스 설치가 실패한다.
+*.sh       text eol=lf
+*.command  text eol=lf
+*.js       text eol=lf
+*.mjs      text eol=lf
+*.json     text eol=lf
+*.html     text eol=lf
+*.css      text eol=lf
+*.md       text eol=lf
+*.txt      text eol=lf
+*.yml      text eol=lf
+*.py       text eol=lf
+*.ps1      text eol=lf
+# Windows 배치 파일은 저장된 그대로(CRLF) 둔다.
+*.cmd      -text
+*.png      binary
+*.wav      binary
+*.mp3      binary

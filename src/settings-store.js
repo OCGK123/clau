@@ -116,6 +116,7 @@ const DEFAULTS = {
   tray: true, // 트레이(macOS는 메뉴 막대) 아이콘
   showInDock: false, // Dock(macOS)이나 작업 표시줄에 아이콘 보이기
   autostart: false, // 로그인할 때 자동 실행
+  setupShown: false, // 설치 마법사를 한 번 거쳤는지(처음 켤 때 자동으로 연다)
   wakeWithClaude: true, // Claude Code를 열면 같이 깨우기(연결돼 있을 때)
   updateCheck: true, // 새 버전이 나왔는지 가끔 살피기
   updateNotified: '', // 이미 알린 버전 번호
@@ -238,12 +239,16 @@ function init(userDataDir) {
   saveError = null
   file = path.join(userDataDir, 'settings.json')
   let saved = {}
+  let existed = false
   try {
     saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+    existed = true
   } catch {
     // 첫 실행이거나 파일이 깨졌으면 기본값으로 시작한다.
   }
   cache = normalize(saved)
+  // 마법사가 생기기 전부터 쓰던 사람에게는 다시 묻지 않는다.
+  if (existed && saved && saved.setupShown === undefined) cache.setupShown = true
   return cache
 }
 
@@ -259,7 +264,7 @@ function set(patch) {
 
 /** 전부 기본값으로. 자리만은 그대로 둔다. */
 function reset() {
-  cache = normalize({ position: cache.position })
+  cache = normalize({ position: cache.position, setupShown: cache.setupShown })
   save()
   return cache
 }
