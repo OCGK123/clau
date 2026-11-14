@@ -15,6 +15,8 @@ const { layout: windowLayout } = require('./window-layout')
 const trackers = require('./tracker')
 const notices = require('./notices')
 const { stripEmoji } = require('./clean')
+const { guardRenderer } = require('./renderer-guard')
+const { createProblemLog } = require('./problem-log')
 
 // 네이티브 Wayland에서는 창이 스스로 위치를 정하거나 항상 위에 있을 수 없다.
 // XWayland로 띄우면 둘 다 되는데, 이 선택은 시작할 때 명령줄로만 할 수 있어서
@@ -38,6 +40,7 @@ const SEAT_SLIDE_MS = 240
 // 말풍선 상자(최대 340px) 둘레에 여유를 둔다: 등장할 때 살짝 부풀어 넘치는 모양과 그림자가 창 끝에 잘리지 않도록.
 const BUBBLE = { width: 384, height: 234 }
 const HIDE_DELAY_MS = 200 // 포커스가 잠깐 비는 순간에 깜빡이지 않도록
+const INPUT_IDLE_POLL_MS = 700 // 마우스가 멀리서 멈춰 있을 때 캐릭터 닿음을 살피는 간격
 const LOCK_DWELL_MS = 600 // 고정 모드: 이만큼 마우스를 올려 두면 우클릭을 받는다
 const TESTING = !!process.env.CLAU_SHOT
 const REPO = updater.repoSlug(require('../package.json'))
@@ -48,6 +51,10 @@ const MODELS_FRESH_MS = 5 * 60 * 1000
 let win = null
 let settingsWin = null
 let setupWin = null
+let petRendererDown = false // 캐릭터 그림 프로세스가 죽어 다시 불러오는 중: 클릭을 받지 않는다
+// 문제 기록. 설정 폴더를 알기 전(앱 준비 전)에는 콘솔로만 남긴다.
+let problems = { write: line => console.error(line) }
+const logProblem = line => problems.write(line)
 let bubbleWin = null
 let tray = null
 let layers = null
@@ -306,6 +313,17 @@ function createBubble() {
     if (expanded && wantVisible()) focusBubble()
     else if (activeNotice && wantVisible()) me.showInactive() // 알림은 하던 일(입력)을 빼앗지 않는다
     me.webContents.send('chat:visibility', bubbleState())
+  })
+  guardRenderer(me, {
+    name: 'bubble',
+    log: logProblem,
+    onRevived: () => {
+      if (bubbleWin !== me) return
+      lastBubbleLayout = null
+      me.webContents.send('chat:visibility', bubbleState())
+      if (expanded && wantVisible()) focusBubble()
+    },
+    onGiveUp: () => me.destroy(), // 닫힘 처리가 대화 상태를 정리한다. 다음에 열 때 새로 만든다
   })
   me.on('closed', () => {
     if (bubbleWin !== me) return
@@ -731,13 +749,19 @@ function cursorOverPet() {
  * 마우스가 캐릭터에서 얼마나 멀리 있는지에 맞춰 다음 확인까지 기다린다: 가까우면 자주, 멀면 드물게.
  * 마우스는 아무리 빨라도 1초에 수천 px이라, 멀리 있을 땐 0.3초쯤 뒤에 봐도 닿기 전에 알아챈다.
  */
+let lastPollPoint = null
 function inputPollMs() {
   const p = screen.getCursorScreenPoint()
   const r = petRect()
   const dx = Math.max(r.x - p.x, 0, p.x - (r.x + r.width))
   const dy = Math.max(r.y - p.y, 0, p.y - (r.y + r.height))
   const far = Math.hypot(dx, dy)
-  const ms = far < 60 ? 50 : far < 300 ? 120 : far < 900 ? 250 : 400
+  // 마우스가 멀리서 가만히 있으면(자리를 비웠거나 다른 일을 하는 중) 더 드물게 본다.
+  // 가까울 때는 줄이지 않는다: 움직이기 시작하자마자 캐릭터에 닿을 수 있다.
+  const still = lastPollPoint && lastPollPoint.x === p.x && lastPollPoint.y === p.y
+  lastPollPoint = p
+  let ms = far < 60 ? 50 : far < 300 ? 120 : far < 900 ? 250 : 400
+  if (still && far >= 300) ms = INPUT_IDLE_POLL_MS
   return onBattery ? Math.round(ms * 1.5) : ms
 }
 
@@ -745,6 +769,7 @@ function syncInput() {
   clearTimeout(inputTimer)
   inputTimer = null
   if (!win) return
+  if (petRendererDown) return win.setIgnoreMouseEvents(true, { forward: true })
   const cfg = store.get()
   if (cfg.locked && win.isVisible() && !expanded && !activeNotice && !menuOpen && !usesKwinCursor()) inputTimer = setTimeout(syncInput, inputPollMs())
   // 캐릭터에 닿았는지 직접 살핀다(마우스와의 거리에 맞춰 드물게~자주).
@@ -828,6 +853,29 @@ function createPet() {
     syncLook()
     sendPower()
   })
+  guardRenderer(me, {
+    name: 'pet',
+    log: logProblem,
+    onGone: () => {
+      if (win !== me) return
+      // 그림이 사라졌는데 창이 클릭을 받으면, 보이지 않는 벽이 생긴다. 다시 살아날 때까지 통과시킨다.
+      petRendererDown = true
+      me.setIgnoreMouseEvents(true, { forward: true })
+      lastInput = ''
+    },
+    onRevived: () => {
+      if (win !== me) return
+      petRendererDown = false
+      lastInput = ''
+      lastLayout = null
+      place()
+      syncInput()
+      syncLook()
+      sendPower()
+      sendClaudeCodeState()
+    },
+    onGiveUp: () => app.quit(),
+  })
   setOnTop()
   place()
   // 붙는 모드에서는 Claude 창을 찾은 뒤에 나타난다.
@@ -873,6 +921,7 @@ function openSettings() {
   })
   settingsWin.setMenuBarVisibility(false)
   settingsWin.loadFile(path.join(__dirname, 'settings.html'))
+  guardRenderer(settingsWin, { name: 'settings', log: logProblem, onGiveUp: () => settingsWin?.destroy() })
   settingsWin.on('closed', () => (settingsWin = null))
 }
 
@@ -901,6 +950,7 @@ function openSetup() {
     setupWin?.show()
     if (process.platform === 'darwin') app.focus({ steal: true }) // 설치 직후에는 Finder가 앞에 있다
   })
+  guardRenderer(setupWin, { name: 'setup', log: logProblem, onGiveUp: () => setupWin?.destroy() })
   setupWin.on('closed', () => {
     setupWin = null
     win?.webContents.send('pet:hello') // 마법사를 닫으면 클로가 인사하며 맞는다
@@ -2149,6 +2199,13 @@ function cleanup() {
   try { fs.rmSync(CLAU_HOME, { recursive: true, force: true }) } catch {}
 }
 
+// 메인 프로세스에서 놓친 오류가 앱 전체를 멈추게 하거나 오류 창을 띄우지 않게, 기록하고 계속 간다.
+// 테스트에서는 그대로 터지게 둔다(숨기면 고장을 못 본다).
+if (!TESTING) {
+  process.on('uncaughtException', err => logProblem(`uncaught: ${err?.stack || err}`))
+  process.on('unhandledRejection', reason => logProblem(`unhandled rejection: ${reason?.stack || reason}`))
+}
+
 function onSecondLaunch(argv) {
   if (argv.includes('--cleanup')) { cleanup(); return app.quit() }
   if (argv.includes('--quit')) return app.quit()
@@ -2176,6 +2233,10 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', (_e, argv) => onSecondLaunch(argv))
   app.whenReady().then(() => {
     store.init(app.getPath('userData'))
+    problems = createProblemLog(app.getPath('userData'))
+    app.on('child-process-gone', (_e, details) => {
+      if (details.reason !== 'clean-exit') logProblem(`${details.type} process gone: ${details.reason} (exit ${details.exitCode})`)
+    })
     groqCredential = credentials.create(app.getPath('userData'), safeStorage)
     layers = JSON.parse(fs.readFileSync(path.join(ASSETS, 'layers.json'), 'utf8'))
     wireIpc()

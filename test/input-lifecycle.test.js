@@ -15,7 +15,7 @@ function inputHarness({ nativeWayland = false, trackerError = null, platform = '
   const sent = []
   const cfg = { locked: false, lookAtCursor: true, reduceMotion: false, chatEnabled: true, lockedChat: true, petting: true, lockedPetting: true }
   const state = {
-    X11_FLAG: '--ozone-platform=x11', TESTING: false, LOCK_DWELL_MS: 600,
+    X11_FLAG: '--ozone-platform=x11', TESTING: false, LOCK_DWELL_MS: 600, INPUT_IDLE_POLL_MS: 700, petRendererDown: false,
     process: { platform, env: platform === 'linux' ? { XDG_SESSION_TYPE: 'wayland' } : {}, argv: nativeWayland ? [] : ['clau', '--ozone-platform=x11'] },
     tracker: { kind: platform === 'linux' ? 'kwin' : platform === 'darwin' ? 'mac' : 'windows', supported: true }, track: { hover: false, focused: true }, trackError: trackerError,
     rendererHover: false, pointerHeld: false, dragFrom: null, expanded: false, activeNotice: null, menuOpen: false,
@@ -163,4 +163,29 @@ test('macOS and Windows still catch the cursor when forwarded mouse moves never 
     h.advance(450)
     assert.equal(h.ignores.at(-1).ignore, false, `${platform}: the character receives the click`)
   }
+})
+
+test('a far, still cursor is checked less often, and polling speeds up again once it moves', () => {
+  const h = inputHarness({ platform: 'darwin' })
+  h.state.point = { x: 0, y: 0 } // 캐릭터에서 멀리
+  h.state.syncInput()
+  const due = () => Math.min(...[...h.timers.values()].map(t => t.at))
+  const first = due() - 1000
+  assert.equal(first, 400, 'the first far poll uses the distance step')
+  h.advance(first)
+  assert.equal(due() - 1400, 700, 'a still far cursor backs off')
+  h.state.point = { x: 1700, y: 760 } // 캐릭터 바로 옆으로 움직였다
+  h.advance(700)
+  assert.ok(due() - 2100 <= 120, 'a moving cursor near the pet is polled quickly again')
+})
+
+test('while the pet renderer is down the window passes every click through and stops polling', () => {
+  const h = inputHarness({ platform: 'darwin' })
+  h.state.point = { x: 1800, y: 900 }
+  h.state.syncInput()
+  assert.equal(h.ignores.at(-1).ignore, false)
+  h.state.petRendererDown = true
+  h.state.syncInput()
+  assert.equal(h.ignores.at(-1).ignore, true, 'an invisible window never blocks clicks')
+  assert.equal(h.timers.size, 0, 'no pointer polling while the character cannot be seen')
 })
