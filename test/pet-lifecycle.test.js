@@ -54,7 +54,7 @@ async function renderer() {
     init: () => Promise.resolve({ cfg: { ...DEFAULTS }, layers: JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/layers.json'), 'utf8')), bust: 0.69, ccState: null, visible: true }),
     expand: value => expansions.push(value), ask() {}, cancel() {}, menu() {}, drag() {},
   }
-  for (const name of ['Cfg', 'Input', 'Hello', 'ClaudeCode', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Layout', 'Visibility', 'ChatVisibility', 'ChatStarted', 'ChatCancelled', 'ChatProvider', 'Look']) pet[`on${name}`] = fn => { callbacks[name] = fn }
+  for (const name of ['Cfg', 'Input', 'Hello', 'ClaudeCode', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Layout', 'Visibility', 'ChatVisibility', 'ChatStarted', 'ChatCancelled', 'ChatProvider', 'Look', 'Notice', 'Power']) pet[`on${name}`] = fn => { callbacks[name] = fn }
   const files = { played: [] }
   const audio = { pats: 0, talks: 0, configure() {}, unlock() {}, pat() { audio.pats++ }, talk() { audio.talks++ }, play: name => files.played.push(name), stop() { audioStops.push('all') }, stopTalk() { audioStops.push('talk') }, dispose() {}, setVisible: value => audioVisibility.push(value) }
   // 몸짓 엔진·이펙트·녹음 효과음은 각자 테스트가 따로 있다. 여기서는 호출 기록만 남긴다.
@@ -307,4 +307,153 @@ test('eyes look toward the mouse within a small reach, and rest when the setting
   r.callbacks.Cfg({ ...r.evaluate('cfg'), flip: false, lookAtCursor: false })
   assert.equal(style['--look-x'], '0px')
   assert.equal(style['--look-y'], '0px')
+})
+
+
+test('dozing starts with a yawn, and waking up stretches first', async () => {
+  const r = await renderer()
+  r.advance(180000)
+  assert.equal(r.evaluate('mode'), 'yawn')
+  assert.equal(r.elements.pet.dataset.mouth, 'yawn')
+  r.advance(2400)
+  assert.equal(r.evaluate('mode'), 'dozing')
+  r.evaluate('wake()')
+  assert.equal(r.evaluate('mode'), 'stretch')
+  r.advance(1100)
+  assert.equal(r.evaluate('mode'), 'idle')
+})
+
+test('Claude Code waking a dozing pet stretches before thinking', async () => {
+  const r = await renderer()
+  r.advance(183000)
+  assert.equal(r.evaluate('mode'), 'dozing')
+  r.callbacks.ClaudeCode({ mode: 'thinking', at: r.evaluate('Date.now()') })
+  assert.equal(r.evaluate('mode'), 'stretch')
+  r.advance(1100)
+  assert.equal(r.evaluate('mode'), 'thinking')
+})
+
+test('many pats in a row make her shy with a blush, and fast rubbing makes her giggle', async () => {
+  const r = await renderer()
+  for (let i = 0; i < 6; i++) r.evaluate('pat()')
+  assert.equal(r.evaluate('mode'), 'petted')
+  r.evaluate('pat()')
+  assert.equal(r.evaluate('mode'), 'shy')
+  assert.equal(r.elements.pet.dataset.blush, 'on')
+  r.evaluate('stopPetting(0)')
+  assert.equal(r.evaluate('mode'), 'pleased')
+  assert.equal(r.elements.pet.dataset.blush, 'on', 'the blush lingers while pleased')
+  r.advance(4000)
+  assert.equal(r.evaluate('mode'), 'idle')
+  assert.equal(r.elements.pet.dataset.blush, 'off')
+  r.evaluate('startPetting(); giggleUntil = Date.now() + GIGGLE_MS; recompute()')
+  assert.equal(r.evaluate('mode'), 'giggle')
+  r.advance(500)
+  assert.equal(r.evaluate('mode'), 'petted')
+})
+
+test('a Claude Code question surprises her, then she tilts her head until it is answered', async () => {
+  const r = await renderer()
+  r.callbacks.Notice({ kind: 'ask', on: true })
+  assert.equal(r.evaluate('mode'), 'surprised')
+  assert.equal(r.elements.pet.classes.has('eyes-wide'), true)
+  r.advance(900)
+  assert.equal(r.evaluate('mode'), 'asking')
+  r.callbacks.Notice({ kind: 'ask', on: false })
+  assert.equal(r.evaluate('mode'), 'idle')
+  r.callbacks.Notice({ kind: 'done' })
+  assert.equal(r.evaluate('mode'), 'happy')
+})
+
+test('coming back after a long absence greets with a hop, a short one does not', async () => {
+  const r = await renderer()
+  r.callbacks.Visibility(false)
+  r.advance(30000)
+  r.callbacks.Visibility(true)
+  assert.equal(r.evaluate('mode'), 'idle')
+  r.callbacks.Visibility(false)
+  r.advance(130000)
+  r.callbacks.Visibility(true)
+  assert.equal(r.evaluate('mode'), 'greet')
+  r.advance(1400)
+  assert.equal(r.evaluate('mode'), 'idle')
+})
+
+test('dropping her after a hard swing makes her dizzy, a gentle carry does not', async () => {
+  const r = await renderer()
+  r.evaluate('window.pet.drag = () => {}')
+  r.evaluate('dragging = true; swing = 100; settleThenEndDrag(true); dragging = false; recompute()')
+  assert.equal(r.evaluate('mode'), 'idle')
+  r.evaluate('dragging = true; swing = 900; settleThenEndDrag(true); dragging = false; recompute()')
+  assert.equal(r.evaluate('mode'), 'dizzy')
+  assert.equal(r.elements.pet.dataset.eyes, 'x')
+  r.advance(2400)
+  assert.equal(r.evaluate('mode'), 'idle')
+})
+
+
+test('battery changes keep idle breathing and the mouth pop, with both rendered by the shared loop', async () => {
+  const r = await renderer()
+  r.evaluate("globalThis.__ticks = new Map(); globalThis.__idle = []; globalThis.__power = []; window.PetAnimator.tick = (key, fn) => fn ? __ticks.set(key, fn) : __ticks.delete(key); window.PetAnimator.setIdleMotion = value => __idle.push(value); window.PetAnimator.setLowPower = value => __power.push(value)")
+  r.callbacks.Power({ battery: true })
+  assert.equal(r.evaluate('__idle.length'), 0, 'power changes never turn idle motion off')
+  assert.equal(r.evaluate('__power.at(-1)'), true)
+  r.evaluate("setLocal('talking'); mouthPop()")
+  assert.equal(r.evaluate("__ticks.has('mouth-pop')"), true)
+  assert.equal(r.evaluate('imgs.mouth_open.style.transform'), 'scale(0.82, 0.55)')
+  r.advance(40)
+  r.evaluate("__ticks.get('mouth-pop')(performance.now())")
+  assert.notEqual(r.evaluate('imgs.mouth_open.style.transform'), 'scale(0.82, 0.55)')
+  r.callbacks.Visibility(false)
+  assert.equal(r.evaluate("__ticks.has('mouth-pop')"), false)
+  assert.equal(r.evaluate('imgs.mouth_open.style.transform'), '')
+  r.callbacks.Power({ battery: false })
+  assert.equal(r.evaluate('__power.at(-1)'), false)
+})
+
+test('thinking selects the original face or the upward-looking pout with the same body motion and spinner', async () => {
+  for (const [random, variant, eyes, mouth] of [[0.1, 'closed', 'closed', 'closed'], [0.9, 'up', 'open', 'pout']]) {
+    const r = await renderer()
+    r.evaluate(`Math.random = () => ${random}; setLocal('thinking')`)
+    assert.equal(r.elements.pet.dataset.thinking, variant)
+    assert.equal(r.elements.pet.dataset.eyes, eyes)
+    assert.equal(r.elements.pet.dataset.mouth, mouth)
+    assert.equal(r.animator.modes.at(-1), 'thinking', 'both faces keep the existing thinking body animation')
+    assert.equal(r.elements.spinner.hidden, false, 'both faces keep the existing spinner')
+    if (variant === 'up') {
+      assert.ok(Number(r.elements.pet.style['--look-y'].replace('px', '')) < -3, 'pupils visibly look up')
+      assert.equal(r.elements.pet.style['--look-x'], '0px')
+      assert.ok(r.evaluate('imgs.mouth_pout.innerHTML').includes('M6 9 35 6v15'), 'the new mouth has an angled top and a downturned right corner')
+      r.callbacks.Look({ x: -2000, y: 3000 })
+      assert.ok(Number(r.elements.pet.style['--look-y'].replace('px', '')) < -3, 'the thinking pose does not follow the mouse away')
+    }
+  }
+})
+
+test('the chosen thinking face survives state refresh, layout, flips, reduced motion and a short hide; the next thought chooses again', async () => {
+  const r = await renderer()
+  r.evaluate("Math.random = () => 0.9; setLocal('thinking'); Math.random = () => 0.1")
+  const before = r.elements.pet.style['--look-y']
+  r.callbacks.ClaudeCode({ mode: 'thinking', at: 0 })
+  r.callbacks.Cfg({ ...r.evaluate('cfg'), flip: true, reduceMotion: true, lookAtCursor: false, size: 420 })
+  r.callbacks.Layout({ ...r.geometry, shape: r.evaluate('currentShape()') })
+  assert.equal(r.elements.pet.dataset.thinking, 'up')
+  assert.equal(r.elements.pet.dataset.mouth, 'pout')
+  assert.equal(r.elements.pet.classes.has('flip'), true)
+  assert.notEqual(r.elements.pet.style['--look-y'], before, 'the raised gaze scales with the character')
+  assert.ok(Number(r.elements.pet.style['--look-y'].replace('px', '')) < 0, 'reduced motion keeps the expression as a static pose')
+  r.callbacks.Visibility(false)
+  r.advance(500)
+  r.callbacks.Visibility(true)
+  assert.equal(r.elements.pet.dataset.thinking, 'up')
+  assert.equal(r.elements.pet.dataset.eyes, 'open')
+  assert.equal(r.elements.pet.dataset.mouth, 'pout')
+  r.evaluate("setLocal('idle')")
+  assert.equal(r.elements.pet.dataset.thinking, '')
+  assert.equal(r.elements.pet.dataset.mouth, 'closed')
+  assert.equal(r.elements.pet.style['--look-y'], '0px', 'leaving thinking releases the raised gaze')
+  r.evaluate("setLocal('thinking')")
+  assert.equal(r.elements.pet.dataset.thinking, 'closed', 'a new thinking transition samples the other face')
+  assert.equal(r.elements.pet.dataset.eyes, 'closed')
+  assert.equal(r.elements.pet.dataset.mouth, 'closed')
 })

@@ -91,6 +91,8 @@ const DEFAULTS = {
 
   // 반응
   followClaudeCode: true, // Claude Code 상태(생각 중/말하는 중/사용 제한) 따라 하기
+  ccNotices: true, // Claude Code 알림 말풍선(작업 끝, 한도)
+  ccAsk: true, // 권한·질문을 말풍선에서 바로 고르기
   petting: true, // 머리를 누르면 쓰다듬기
   dragEnabled: true,
   dragPhysics: true,

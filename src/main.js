@@ -13,6 +13,7 @@ const modelLists = require('./models')
 const updater = require('./updater')
 const { layout: windowLayout } = require('./window-layout')
 const trackers = require('./tracker')
+const notices = require('./notices')
 const { stripEmoji } = require('./clean')
 
 // 네이티브 Wayland에서는 창이 스스로 위치를 정하거나 항상 위에 있을 수 없다.
@@ -92,6 +93,16 @@ let update = { state: 'idle', version: null, notes: '', page: null, progress: 0,
 let updateInfo = null
 let updateTimer = null
 let updateChecked = false
+let onBattery = false
+
+// Claude Code 알림 말풍선: 일이 끝났을 때, 한도에 닿았을 때, 골라야 할 때(권한·질문·계획).
+let noticeServer = null
+let activeNotice = null // 지금 말풍선에 떠 있는 알림 { view, ask }
+const askQueue = [] // 기다리는 고르기(먼저 온 순서)
+let infoNotice = null // 아직 못 보여 준 알림(끝, 한도): 가장 최근 것 하나만
+let noticeTimer = null
+const INFO_MS = { done: 6500, limit: 9000 }
+const INFO_STALE_MS = 15 * 60_000 // 숨어 있는 동안 온 알림은 이만큼 안에 다시 나타나면 보여 준다
 
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(value, hi))
 
@@ -259,6 +270,17 @@ function sendChat(channel, ...args) {
   for (const target of [win, bubbleWin]) if (target && !target.isDestroyed()) target.webContents.send(channel, ...args)
 }
 
+/** 말풍선 창이 보여 줄 것: 대화, 또는 Claude Code 알림(알림이 대화보다 앞). */
+function bubbleState() {
+  return { open: expanded || !!activeNotice, chat: expanded, notice: activeNotice?.view ?? null, layout: chatLayout() }
+}
+/** 말풍선 창과 캐릭터 창에 지금 상태를 알린다. 캐릭터는 대화가 열렸는지만 안다. */
+function sendBubbleState() {
+  const state = bubbleState()
+  if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.webContents.send('chat:visibility', state)
+  if (win && !win.isDestroyed()) win.webContents.send('chat:visibility', { open: expanded, layout: state.layout })
+}
+
 function createBubble() {
   if (bubbleWin) return
   const layout = chatLayout()
@@ -280,10 +302,12 @@ function createBubble() {
   me.webContents.once('did-finish-load', () => {
     if (bubbleWin !== me) return
     if (expanded && wantVisible()) focusBubble()
-    me.webContents.send('chat:visibility', { open: expanded, layout: chatLayout() })
+    else if (activeNotice && wantVisible()) me.showInactive() // 알림은 하던 일(입력)을 빼앗지 않는다
+    me.webContents.send('chat:visibility', bubbleState())
   })
   me.on('closed', () => {
     if (bubbleWin !== me) return
+    passPendingAsks()
     bubbleWin = null
     expanded = false
     bubbleClosing = false
@@ -315,15 +339,131 @@ function setChatOpen(on) {
   } else {
     if (!expanded && !bubbleClosing) return
     expanded = false
-    bubbleClosing = !!bubbleWin?.isVisible()
+    bubbleClosing = !activeNotice && !!bubbleWin?.isVisible()
   }
-  sendChat('chat:visibility', { open: on, layout: chatLayout() })
+  sendBubbleState()
   syncInput()
 }
 
-/** 배터리로 도는지 화면에 알린다: 배터리일 땐 가만히 있는 동안의 숨쉬기를 쉰다. */
+// ── Claude Code 알림 말풍선 ────────────────────────────────────────────
+const noticesOn = (cfg = store.get()) => cfg.followClaudeCode && cfg.ccNotices !== false
+/** 지금 고르기를 클로에게 맡겨도 되는가: 켜져 있고, 캐릭터가 보이고 있을 때만. */
+function canAsk() {
+  const cfg = store.get()
+  return noticesOn(cfg) && cfg.ccAsk !== false && !!win?.isVisible() && wantVisible()
+}
+
+function startNotices() {
+  if (noticeServer) return
+  noticeServer = notices.create({
+    canAsk,
+    onAsk: ask => {
+      askQueue.push({ view: notices.describe(ask), ask })
+      // 끝·한도 알림이 떠 있으면 고르기가 먼저다.
+      if (activeNotice && !activeNotice.ask) endNotice(false)
+      pumpNotices()
+    },
+    onCancel: id => {
+      const i = askQueue.findIndex(item => item.view.id === id)
+      if (i >= 0) askQueue.splice(i, 1)
+      if (activeNotice?.view.id === id) endNotice()
+    },
+    onNotify: n => {
+      if (!noticesOn()) return
+      const time = n.resetsAt ? new Date(n.resetsAt) : null
+      const view = {
+        id: `info-${Date.now()}`,
+        kind: n.kind,
+        from: n.project ? `Claude Code · ${String(n.project).slice(0, 40)}` : 'Claude Code',
+        title: n.kind === 'done' ? '작업을 다 끝냈어요!' : '나 한도에 도달했어요..',
+        detail: n.kind === 'limit' && time && !Number.isNaN(time.getTime()) ? `${time.toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}에 다시 일어날게요` : '',
+      }
+      infoNotice = { view, at: Date.now() }
+      if (activeNotice && !activeNotice.ask) endNotice(false)
+      pumpNotices()
+    },
+  })
+  noticeServer.ready.then(() => writeAppInfo()).catch(() => { noticeServer = null })
+}
+
+/** 다음 알림을 말풍선에 띄운다. 고르기가 먼저, 캐릭터가 보일 때만. */
+function pumpNotices() {
+  if (!noticesOn()) return
+  if (!canAsk()) passPendingAsks()
+  if (activeNotice || !win) return
+  if (infoNotice && Date.now() - infoNotice.at > INFO_STALE_MS) infoNotice = null
+  if (!wantVisible() || !win.isVisible()) return // 숨어 있으면 나타날 때 보여 준다
+  const next = askQueue.shift() ?? (infoNotice ? { view: infoNotice.view, ask: null } : null)
+  if (!next) return
+  if (!next.ask) infoNotice = null
+  activeNotice = next
+  clearTimeout(bubbleIdleTimer)
+  bubbleClosing = false
+  createBubble()
+  placeBubble()
+  if (!bubbleWin.webContents.isLoading() && !bubbleWin.isVisible()) bubbleWin.showInactive()
+  sendBubbleState()
+  win.webContents.send('pet:notice', { kind: next.ask ? 'ask' : next.view.kind, on: true })
+  clearTimeout(noticeTimer)
+  if (!next.ask) noticeTimer = setTimeout(() => endNotice(), INFO_MS[next.view.kind] ?? 6000)
+  syncInput()
+}
+
+/** 떠 있는 알림을 거둔다. 다음 알림이 있으면 이어서, 없으면 말풍선을 닫는다(대화 중이면 대화로 돌아간다). */
+function endNotice(pump = true) {
+  clearTimeout(noticeTimer)
+  noticeTimer = null
+  const was = activeNotice
+  if (!was) return
+  activeNotice = null
+  if (was.ask) win?.webContents.send('pet:notice', { kind: 'ask', on: false })
+  if (!expanded) bubbleClosing = !!bubbleWin?.isVisible()
+  sendBubbleState()
+  syncInput()
+  if (pump) pumpNotices()
+}
+
+
+/** 숨기거나 고르기를 끌 때는 대기 중인 질문 전부를 Claude Code에 돌려준다. */
+function passPendingAsks() {
+  // 먼저 비운다. 말풍선을 닫는 동안 다음 질문이 다시 뜨지 않도록.
+  askQueue.length = 0
+  for (const ask of noticeServer?.pending() ?? []) noticeServer.answer(ask.id, { choice: 'pass' })
+  if (activeNotice?.ask) endNotice(false)
+}
+
+
+/** 배터리로 도는지 화면에 알린다: 배터리에서도 움직임을 유지하며 그리기 주기를 낮춘다. */
+/**
+ * Linux: 전원 상태를 시스템에서 직접 읽는다. 충전기가 꽂혀 있으면(Mains/USB 전원이 online) 배터리가 아니다.
+ * 마우스·키보드 같은 기기 배터리(scope=Device)는 뺀다. Electron은 충전 한도로 '충전 안 함' 상태인 노트북을
+ * 배터리로 잘못 알려 주는 일이 있어서(꽂혀 있는데 숨쉬기를 쉬었다) 이쪽을 먼저 믿는다.
+ */
+function linuxOnBattery() {
+  const dir = '/sys/class/power_supply'
+  let online = false
+  let discharging = false
+  for (const name of fs.readdirSync(dir)) {
+    const read = file => { try { return fs.readFileSync(path.join(dir, name, file), 'utf8').trim() } catch { return '' } }
+    if (read('scope') === 'Device') continue
+    const type = read('type')
+    if (type === 'Mains' || type.startsWith('USB')) { if (read('online') === '1') online = true }
+    else if (type === 'Battery' && read('status') === 'Discharging') discharging = true
+  }
+  return !online && discharging
+}
+function batteryNow() {
+  if (process.env.CLAU_POWER) return process.env.CLAU_POWER === 'battery'
+  if (process.platform === 'linux') { try { return linuxOnBattery() } catch { /* 아래로 */ } }
+  try { return !!powerMonitor.isOnBatteryPower() } catch { return false }
+}
+let powerTimer = null
 function sendPower() {
-  try { win?.webContents.send('pet:power', { battery: powerMonitor.isOnBatteryPower() }) } catch { /* 일부 Linux에서는 알 수 없다 */ }
+  onBattery = batteryNow()
+  // Linux는 꽂고 뽑는 소식이 늦거나 틀릴 수 있어 2분마다 한 번 다시 본다(파일 몇 개 읽기).
+  if (process.platform === 'linux' && !powerTimer) { powerTimer = setInterval(() => { if (batteryNow() !== onBattery) sendPower() }, 120_000); powerTimer.unref?.() }
+  win?.webContents.send('pet:power', { battery: onBattery })
+  syncLook()
 }
 
 // 말풍선 창은 닫힌 채로 이만큼 지나면 없앤다(렌더러 프로세스 하나만큼의 메모리를 돌려준다).
@@ -383,13 +523,16 @@ function syncVisibility() {
       place()
       syncInput()
     }
-    if (expanded && bubbleWin && !bubbleWin.isVisible() && !bubbleWin.webContents.isLoading()) {
+    if ((expanded || activeNotice) && bubbleWin && !bubbleWin.isVisible() && !bubbleWin.webContents.isLoading()) {
       placeBubble()
       bubbleWin.showInactive()
       bubbleWin.webContents.send('pet:visibility', true)
     }
-  } else if (win.isVisible() && !hideTimer) {
-    hideTimer = setTimeout(() => {
+    // 숨어 있는 동안 온 알림(작업 끝, 한도)을 이제 보여 준다.
+    if (!activeNotice) pumpNotices()
+  } else {
+    passPendingAsks()
+    if (win.isVisible() && !hideTimer) hideTimer = setTimeout(() => {
       hideTimer = null
       if (win && !wantVisible()) {
         win.webContents.send('pet:visibility', false)
@@ -479,8 +622,9 @@ function sendLook(point) {
 }
 
 /** 켜져 있고 보이는 동안만 마우스를 살핀다. KDE(Wayland)는 창 관리자 스크립트가 알려 준다. */
-const LOOK_FAST_MS = 33
-const LOOK_SLOW_MS = 200
+// 눈동자는 0.14초 동안 부드럽게 따라가므로(pet.css) 1초에 20번이면 충분하다. 배터리로 돌 땐 그 절반.
+const LOOK_FAST_MS = 50
+const LOOK_SLOW_MS = 250
 const LOOK_IDLE_AFTER_MS = 1000
 function syncLook() {
   clearTimeout(lookTimer)
@@ -492,19 +636,20 @@ function syncLook() {
     return
   }
   if (tracker?.kind === 'kwin' && !trackError) return
-  // 마우스가 움직이는 동안은 30fps로, 1초 넘게 멈춰 있으면 5fps로 묻는다.
-  // 계속 33ms마다 깨우면 마우스를 안 쓰는 동안에도 CPU가 쉬지 못한다(배터리).
+  // 마우스가 움직이는 동안은 1초에 20번, 1초 넘게 멈춰 있으면 4번 묻는다(배터리로 돌 땐 각각 절반).
+  // 계속 자주 깨우면 마우스를 안 쓰는 동안에도 CPU가 쉬지 못한다.
   let still = 0
   let lastPoint = ''
+  const k = onBattery ? 2 : 1
   const tick = () => {
     const p = screen.getCursorScreenPoint()
     const key = `${p.x},${p.y}`
     still = key === lastPoint ? still + 1 : 0
     lastPoint = key
     sendLook(p)
-    lookTimer = setTimeout(tick, still * LOOK_FAST_MS > LOOK_IDLE_AFTER_MS ? LOOK_SLOW_MS : LOOK_FAST_MS)
+    lookTimer = setTimeout(tick, k * (still * LOOK_FAST_MS > LOOK_IDLE_AFTER_MS ? LOOK_SLOW_MS : LOOK_FAST_MS))
   }
-  lookTimer = setTimeout(tick, LOOK_FAST_MS)
+  lookTimer = setTimeout(tick, LOOK_FAST_MS * k)
 }
 
 // ── 고정 모드: 마우스를 받을지 말지 ─────────────────────────────────────
@@ -525,14 +670,28 @@ function cursorOverPet() {
   return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height
 }
 
+/**
+ * 마우스가 캐릭터에서 얼마나 멀리 있는지에 맞춰 다음 확인까지 기다린다: 가까우면 자주, 멀면 드물게.
+ * 마우스는 아무리 빨라도 1초에 수천 px이라, 멀리 있을 땐 0.3초쯤 뒤에 봐도 닿기 전에 알아챈다.
+ */
+function inputPollMs() {
+  const p = screen.getCursorScreenPoint()
+  const r = petRect()
+  const dx = Math.max(r.x - p.x, 0, p.x - (r.x + r.width))
+  const dy = Math.max(r.y - p.y, 0, p.y - (r.y + r.height))
+  const far = Math.hypot(dx, dy)
+  const ms = far < 60 ? 50 : far < 300 ? 120 : far < 900 ? 250 : 400
+  return onBattery ? Math.round(ms * 1.5) : ms
+}
+
 function syncInput() {
   clearTimeout(inputTimer)
   inputTimer = null
   if (!win) return
   const cfg = store.get()
-  if (cfg.locked && win.isVisible() && !expanded && !menuOpen && tracker?.kind !== 'kwin') inputTimer = setTimeout(syncInput, 100)
+  if (cfg.locked && win.isVisible() && !expanded && !activeNotice && !menuOpen && tracker?.kind !== 'kwin') inputTimer = setTimeout(syncInput, inputPollMs())
   // 마우스 이동을 화면으로 전달할 수 없는 Linux에서는 캐릭터에 닿았는지 직접 살핀다.
-  else if (!cfg.locked && process.platform === 'linux' && win.isVisible() && tracker?.kind !== 'kwin') inputTimer = setTimeout(syncInput, 100)
+  else if (!cfg.locked && process.platform === 'linux' && win.isVisible() && tracker?.kind !== 'kwin') inputTimer = setTimeout(syncInput, inputPollMs())
   if (TESTING || pointerHeld || dragFrom) {
     armed = true // 누르고 있는 동안 놓치면 손을 뗀 걸 모른다
     hoverSince = 0
@@ -540,8 +699,8 @@ function syncInput() {
     // 창은 캐릭터보다 크다. 빈 자리는 통과시켜 뒤의 앱 창을 그대로 누를 수 있게 한다.
     armed = menuOpen || (win.isVisible() && cursorOverPet())
     hoverSince = 0
-  } else if (expanded || menuOpen) {
-    armed = true // 대화 중이거나 메뉴가 떠 있는 동안에는 계속 받는다
+  } else if (expanded || activeNotice || menuOpen) {
+    armed = true // 대화 중이거나 메뉴·알림이 떠 있는 동안에는 계속 받는다
   } else {
     // Claude가 앞에 있을 때만 다가갈 수 있다. 추적이 안 되는 환경에서는 언제나.
     const reachable = tracker?.supported && !trackError ? track.focused : true
@@ -597,6 +756,7 @@ function createPet() {
   lastLayout = null
   me.setMenuBarVisibility(false)
   me.loadFile(path.join(__dirname, 'pet.html'))
+  me.on('hide', () => { if (win === me) passPendingAsks() })
   me.on('closed', () => {
     if (win !== me) return // 새 창으로 갈아 끼운 뒤라면 그냥 사라진다
     win = null
@@ -707,7 +867,12 @@ function refresh(before, cfg) {
   if (before.followClaudeCode !== cfg.followClaudeCode) watchState()
   if (before.autostart !== cfg.autostart) setAutostart(cfg.autostart)
   if (before.historyTurns !== cfg.historyTurns) history = cfg.historyTurns ? history.slice(-cfg.historyTurns) : []
-  if (before.wakeWithClaude !== cfg.wakeWithClaude) writeAppInfo()
+  if (before.wakeWithClaude !== cfg.wakeWithClaude || before.ccNotices !== cfg.ccNotices || before.ccAsk !== cfg.ccAsk || before.followClaudeCode !== cfg.followClaudeCode) writeAppInfo()
+  if (!noticesOn(cfg) || cfg.ccAsk === false) passPendingAsks()
+  if (!noticesOn(cfg)) {
+    infoNotice = null
+    if (activeNotice) endNotice(false)
+  }
   // KDE는 창 관리자 스크립트가 마우스 자리를 알려 주므로, 켜고 끌 때 스크립트를 다시 올린다.
   if (wantsLook(before) !== wantsLook(cfg) && trackers.pick() === 'kwin') startTracker()
   if (before.view !== cfg.view && cfg.view === 'auto') { place(); seatIfOnFloor() }
@@ -952,14 +1117,16 @@ function watchState() {
 /** 실행 파일이 어디 있는지 적어 둔다. Claude Code 안의 /clau 명령이 이걸 보고 클로를 깨운다. */
 function writeAppInfo() {
   try {
-    if (!fs.existsSync(CLAUDE_HOME)) return // Claude Code를 쓰지 않는 컴퓨터
+    if (TESTING || !fs.existsSync(CLAUDE_HOME)) return // Claude Code를 쓰지 않는 컴퓨터
     const args = app.isPackaged ? [] : [app.getAppPath()]
     if (process.argv.includes(X11_FLAG)) args.push(X11_FLAG)
     fs.mkdirSync(CLAU_HOME, { recursive: true })
-    fs.writeFileSync(
-      APP_FILE,
-      JSON.stringify({ exec: process.execPath, args, platform: process.platform, wake: store.get().wakeWithClaude }),
-    )
+    // 알림 창구의 번호와 열쇠도 같이 적는다: 나만 읽을 수 있게(600).
+    const info = { exec: process.execPath, args, platform: process.platform, wake: store.get().wakeWithClaude }
+    if (noticeServer?.port) Object.assign(info, { port: noticeServer.port, token: noticeServer.token, notices: noticesOn(), ask: store.get().ccAsk !== false })
+    const draft = `${APP_FILE}.${process.pid}`
+    fs.writeFileSync(draft, JSON.stringify(info), { mode: 0o600 })
+    fs.renameSync(draft, APP_FILE)
   } catch {
     // 못 적어도 클로는 그대로 돈다. /clau 명령만 클로를 찾지 못한다.
   }
@@ -1153,7 +1320,7 @@ function wireIpc() {
     visible: win?.isVisible() ?? true,
     chatOpen: expanded,
     chatLayout: chatLayout(),
-    chatVisibility: { open: expanded, layout: chatLayout() },
+    chatVisibility: e.sender === bubbleWin?.webContents ? bubbleState() : { open: expanded, layout: chatLayout() },
     ccState: store.get().followClaudeCode ? readState() : null,
   }))
   ipcMain.on('pet:hover', (e, over, held) => {
@@ -1166,13 +1333,27 @@ function wireIpc() {
     setChatOpen(on)
   })
   ipcMain.on('chat:closed', e => {
-    if (e.sender !== bubbleWin?.webContents || expanded) return
+    if (e.sender !== bubbleWin?.webContents || expanded || activeNotice) return
     bubbleClosing = false
     bubbleWin.hide()
     syncInput()
     scheduleBubbleCleanup()
   })
   ipcMain.on('pet:menu', popupMenu)
+  // 말풍선에서 고른 답: 기다리는 Claude Code에게 그대로 돌려준다.
+  ipcMain.on('notice:answer', (e, id, answer) => {
+    if (e.sender !== bubbleWin?.webContents || !activeNotice || activeNotice.view.id !== id) return
+    if (activeNotice.ask) {
+      if (!canAsk()) { passPendingAsks(); return }
+      const choice = ['allow', 'always', 'deny', 'answers', 'pass'].includes(answer?.choice) ? answer.choice : 'pass'
+      const clean = { choice }
+      if (choice === 'answers' && answer.answers && typeof answer.answers === 'object') {
+        clean.answers = Object.fromEntries(Object.entries(answer.answers).filter(([k, v]) => typeof k === 'string' && typeof v === 'string').slice(0, 8).map(([k, v]) => [k, v.slice(0, 2000)]))
+      }
+      noticeServer?.answer(id, clean)
+    }
+    endNotice()
+  })
   ipcMain.on('pet:drag', (_e, phase, dx, dy) => {
     const cfg = store.get()
     if (!win || cfg.locked || !cfg.dragEnabled) return
@@ -1696,6 +1877,105 @@ async function selfTest(dir) {
     await wait(340)
     check(running === null && !bubbleWin.isVisible() && await bjs('!busy'), 'Disabling chat cancels active process and closes bubble')
   }
+  // 새 상태와 반응: 하품, 기지개, 깜짝(!), 갸웃(?), 부끄(볼), 어질어질, 반가워, 킥킥, 땀방울
+  applySettings({ followClaudeCode: true, ccNotices: true, ccAsk: true, placement: 'free', position: { x: 600, y: 420 }, chatEnabled: true })
+  setChatOpen(false)
+  await wait(400)
+  for (const [state, at] of [['yawn', 1000], ['stretch', 500], ['surprised', 160], ['asking', 700], ['shy', 400], ['dizzy', 500], ['greet', 350], ['giggle', 200], ['oops', 300]]) {
+    await js(`react = null; touched = null; asking = false; setLocal(null); setLocal('${state}')`)
+    await wait(at)
+    await shot(`state-${state}`)
+    check(await js(`mode === '${state}'`), `State ${state} shows`)
+  }
+  for (const [variant, roll] of [['closed', 0.1], ['up', 0.9]]) {
+    await js(`(() => { const random = Math.random; try { Math.random = () => ${roll}; react = null; touched = null; asking = false; setLocal('idle'); setLocal('thinking') } finally { Math.random = random } })()`)
+    await wait(650)
+    check(await js(`petEl.dataset.thinking === '${variant}' && petEl.dataset.eyes === '${variant === 'up' ? 'open' : 'closed'}' && petEl.dataset.mouth === '${variant === 'up' ? 'pout' : 'closed'}'`), `Thinking face ${variant} shows`)
+    await shot(`thinking-${variant}`)
+  }
+  check(await js("setLocal('shy'); petEl.dataset.blush === 'on'"), 'Shy turns the cheeks pink')
+  await js('setLocal(null)')
+  await wait(300)
+
+  // Claude Code 알림: 진짜 HTTP로 묻고, 말풍선의 단추를 눌러 답이 돌아오는지.
+  await noticeServer.ready
+  const door = (where, body) => fetch(`http://127.0.0.1:${noticeServer.port}${where}`, { method: 'POST', headers: { 'x-clau-token': noticeServer.token, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(r => (r.status === 204 ? null : r.json()))
+  const permission = door('/ask', { id: 'shot-perm', kind: 'permission', project: 'clau', tool: 'Bash', input: { command: 'npm test -- --watch=false' }, suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }], behavior: 'allow', destination: 'localSettings' }] })
+  for (let i = 0; i < 40 && !(bubbleWin?.isVisible() && await bjs('noticeView?.id === "shot-perm" && phase === "open"').catch(() => false)); i++) await wait(50)
+  check(activeNotice?.view.id === 'shot-perm' && bubbleWin.isVisible(), 'A Claude Code permission request opens the bubble')
+  check(await js('asking && (mode === "surprised" || mode === "asking")'), 'The pet is surprised, then waits with a tilted head')
+  check(!bubbleWin.isFocused() || process.platform === 'linux', 'The notice does not steal keyboard focus')
+  await wait(900)
+  await shot('notice-permission', bubbleWin)
+  await shot('notice-permission-pet')
+  await bjs("[...document.querySelectorAll('#noticeChoices .choice')].find(b => b.textContent === '다음부터 묻지 않기').click()")
+  const permitted = await permission
+  check(permitted?.state === 'answered' && permitted.answer.choice === 'always', 'Clicking a bubble button answers the waiting Claude Code request')
+  await wait(500)
+  check(!activeNotice && await js('!asking && mode !== "asking"'), 'Answering takes the bubble and the tilted head away')
+  const question = door('/ask', { id: 'shot-q', kind: 'question', project: 'clau', tool: 'AskUserQuestion', input: { questions: [{ question: '어떤 과일이 좋아요?', header: '과일', multiSelect: false, options: [{ label: '사과', description: '새콤달콤' }, { label: '바나나', description: '부드러움' }] }] } })
+  for (let i = 0; i < 40 && !(await bjs('noticeView?.id === "shot-q" && phase === "open"').catch(() => false)); i++) await wait(50)
+  await wait(300)
+  check(await bjs("noticeElsewhere.getBoundingClientRect().bottom <= dialog.getBoundingClientRect().bottom - 4"), 'The native question fallback stays visible beside scrollable choices')
+  await shot('notice-question', bubbleWin)
+  await bjs("[...document.querySelectorAll('#noticeChoices .choice')].find(b => b.textContent.startsWith('바나나')).click()")
+  const answered = await question
+  check(answered?.state === 'answered' && answered.answer.answers?.['어떤 과일이 좋아요?'] === '바나나', 'A question answered in the bubble goes back keyed by its question')
+  await wait(400)
+  const elsewhere = door('/ask', { id: 'shot-pass', kind: 'plan', project: 'clau', tool: 'ExitPlanMode', input: { plan: '1. 테스트 2. 고치기' } })
+  for (let i = 0; i < 40 && !(await bjs('noticeView?.id === "shot-pass" && phase === "open"').catch(() => false)); i++) await wait(50)
+  await bjs("document.getElementById('noticeElsewhere').click()")
+  check((await elsewhere)?.state === 'pass', '"Claude Code에서 볼래요" hands the choice back to Claude Code')
+  await wait(400)
+  await door('/notify', { kind: 'done', project: 'clau' })
+  await wait(700)
+  check(activeNotice?.view.title === '작업을 다 끝냈어요!' && bubbleWin.isVisible(), 'Finished work pops a bubble')
+  await shot('notice-done', bubbleWin)
+  await shot('notice-done-pet')
+  endNotice()
+  await wait(400)
+  await door('/notify', { kind: 'limit', project: 'clau', resetsAt: new Date(Date.now() + 3600e3).toISOString() })
+  await wait(700)
+  check(activeNotice?.view.title === '나 한도에 도달했어요..', 'The usage limit pops a bubble')
+  await shot('notice-limit', bubbleWin)
+  endNotice()
+  // 고르는 도중 숨기거나 설정을 끄면 활성·대기 질문 모두 즉시 Claude Code로 돌려준다.
+  const waitForNotice = async id => {
+    for (let i = 0; i < 40 && activeNotice?.view.id !== id; i++) await wait(25)
+    assert.equal(activeNotice?.view.id, id)
+  }
+  const request = id => door('/ask', { id, kind: 'permission', tool: 'Bash', input: { command: 'npm test' } })
+  const hiding = request('shot-hide-active')
+  await waitForNotice('shot-hide-active')
+  win.hide()
+  check((await hiding)?.state === 'pass' && !activeNotice, 'Hiding while a choice is open immediately hands it back')
+  win.showInactive()
+  for (const setting of ['ccAsk', 'ccNotices', 'followClaudeCode']) {
+    const first = request(`shot-${setting}-active`)
+    await waitForNotice(`shot-${setting}-active`)
+    const second = request(`shot-${setting}-queued`)
+    for (let i = 0; i < 40 && askQueue.length === 0; i++) await wait(25)
+    assert.equal(askQueue.length, 1)
+    applySettings({ [setting]: false })
+    check((await first)?.state === 'pass' && (await second)?.state === 'pass' && !activeNotice && askQueue.length === 0, `Disabling ${setting} releases active and queued choices`)
+    applySettings({ [setting]: true })
+  }
+  const longCommand = 'printf "' + 'x'.repeat(650) + '"; echo complete-command-tail'
+  const longRequest = door('/ask', { id: 'shot-full-command', kind: 'permission', tool: 'Bash', input: { command: longCommand } })
+  await waitForNotice('shot-full-command')
+  for (let i = 0; i < 30 && !(await bjs("noticeView?.id === 'shot-full-command' && phase === 'open'")); i++) await wait(25)
+  check(await bjs("noticeDetail.textContent.includes('complete-command-tail') && getComputedStyle(noticeDetail).overflowY === 'auto' && noticeDetail.tabIndex === 0"), 'Long permission details remain complete and scrollable by keyboard')
+  await shot('notice-long-command', bubbleWin)
+  await bjs("document.getElementById('noticeElsewhere').click()")
+  await longRequest
+  // 숨어 있을 땐 고르기를 맡지 않는다(Claude Code가 직접 묻게).
+  win.hide()
+  check((await door('/ask', { id: 'shot-hidden', kind: 'permission', tool: 'Bash', input: { command: 'ls' } }))?.state === 'pass', 'A hidden pet passes a request straight back to Claude Code')
+  win.showInactive()
+  await wait(300)
+  applySettings({ followClaudeCode: false })
+  await wait(100)
+
   // Linux(X11)는 통과시킨 창으로 마우스 움직임을 넘겨주지 못해서, 캐릭터에 닿았는지 직접 살펴야 한다.
   check(process.platform === 'linux' ? inputTimer !== null : inputTimer === null, 'Unlocked pet polls the mouse only where the platform needs it')
   check(stateWatcher === null, 'Disabled Claude Code following uses no file watcher')
@@ -1774,6 +2054,7 @@ if (!app.requestSingleInstanceLock()) {
     groqCredential = credentials.create(app.getPath('userData'), safeStorage)
     layers = JSON.parse(fs.readFileSync(path.join(ASSETS, 'layers.json'), 'utf8'))
     wireIpc()
+    startNotices()
     startTracker()
     createPet()
     syncDock()
@@ -1799,6 +2080,7 @@ if (!app.requestSingleInstanceLock()) {
   let cleaned = false
   app.on('will-quit', e => {
     cancelChat()
+    noticeServer?.close()
     clearTimeout(inputTimer)
     clearTimeout(stateRefreshTimer)
     clearTimeout(updateTimer)

@@ -54,10 +54,14 @@ function Find-Target {
 
 $targetWindow = [IntPtr]::Zero
 $last = ''
-$tick = 0
 $cachedWindow = [IntPtr]::Zero
 $cachedRect = $null
 $lastState = ''
+# 얼마나 자주 살필지: 따라붙을 창이 움직이는 동안은 1초에 25번(부드럽게 따라가게), 잠잠하면 8번,
+# 1.5초 넘게 그대로면 4번, 클로가 숨어 있으면(다른 앱이 앞) 3번 남짓. 예전엔 늘 1초에 8번이었다.
+$clock = [System.Diagnostics.Stopwatch]::StartNew()
+$quietSince = 0
+$lastFind = -100000
 while ($true) {
   $fg = [ClauWin]::GetForegroundWindow()
   $fgPid = 0
@@ -70,14 +74,14 @@ while ($true) {
   if (-not $alive) {
     $targetWindow = [IntPtr]::Zero
     # 프로세스 목록을 훑는 일은 무거워서 2초에 한 번만 한다.
-    if ($tick % 16 -eq 0) { $names.Clear(); $targetWindow = Find-Target }
+    if ($clock.ElapsedMilliseconds - $lastFind -ge 2000) { $lastFind = $clock.ElapsedMilliseconds; $names.Clear(); $targetWindow = Find-Target }
   }
 
   $minimized = $false
+  $visible = $ShowWhen -eq 'open' -or $active -eq 'target' -or $active -eq 'ours'
   if ($targetWindow -ne $cachedWindow) { $cachedRect = $null; $cachedWindow = $targetWindow }
   if ($targetWindow -ne [IntPtr]::Zero) {
     $minimized = [ClauWin]::IsIconic($targetWindow)
-    $visible = $ShowWhen -eq 'open' -or $active -eq 'target' -or $active -eq 'ours'
     # Hidden pets do not need DWM geometry. Keep the cheap focus check at the
     # original 120ms rate so returning to the selected app remains immediate.
     if (-not $cachedRect -or ($visible -and -not $minimized)) {
@@ -91,11 +95,16 @@ while ($true) {
   $state = "$targetWindow/$active/$minimized/$($cachedRect -join ',')"
   if ($state -ne $lastState) {
     $lastState = $state
+    $quietSince = $clock.ElapsedMilliseconds
     $msg = @{ found = $targetWindow -ne [IntPtr]::Zero; active = $active }
     if ($msg.found) { $msg.rect = $cachedRect; $msg.minimized = $minimized }
     $text = $msg | ConvertTo-Json -Compress
     if ($text -ne $last) { $last = $text; [Console]::Out.WriteLine($text); [Console]::Out.Flush() }
   }
-  $tick++
-  Start-Sleep -Milliseconds 120
+  $quiet = $clock.ElapsedMilliseconds - $quietSince
+  if (-not $visible -or $minimized -or $targetWindow -eq [IntPtr]::Zero) { $wait = 350 }
+  elseif ($quiet -lt 400) { $wait = 40 }
+  elseif ($quiet -lt 1500) { $wait = 120 }
+  else { $wait = 250 }
+  Start-Sleep -Milliseconds $wait
 }

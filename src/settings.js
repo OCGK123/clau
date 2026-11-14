@@ -412,6 +412,8 @@ function render() {
   const following = cfg.followClaudeCode && (modConnected || !hasClaudeCode)
   el('followClaudeCode').checked = following
   el('followClaudeCode').disabled = !hasClaudeCode
+  el('ccNotices').disabled = !following
+  el('ccAsk').disabled = !following || !cfg.ccNotices
   if (info.modError) setStatus(el('modStatus'), `연결하지 못했어요: ${info.modError}`, 'bad')
   else if (!hasClaudeCode) setStatus(el('modStatus'), '이 컴퓨터에서 Claude Code를 찾지 못했어요.')
   else if (!following) setStatus(el('modStatus'), '켜면 Claude Code가 생각할 땐 눈을 감고, 말할 땐 입을 움직이고, 일할 땐 바빠져요.')

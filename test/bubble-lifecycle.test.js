@@ -28,10 +28,16 @@ async function renderer({ hidden = false } = {}) {
     addEventListener(key, fn) { this.listeners[key] = fn }
     hasChildNodes() { return !!this.textContent || !!this.innerHTML }
     focus() {}
+    appendChild(child) { (this.children ||= []).push(child); child.parent = this; return child }
+    replaceChildren() { this.children = [] }
+    remove() { if (this.parent) this.parent.children = this.parent.children.filter(c => c !== this) }
+    set className(value) { this.classes = new Set(String(value).split(/\s+/).filter(Boolean)) }
+    get className() { return [...this.classes].join(' ') }
   }
-  const elements = Object.fromEntries(['dialog', 'answer', 'ask', 'q', 'send', 'cancel', 'closeBubble'].map(name => [name, new Element()]))
-  const document = { body: new Element(), visibilityState: hidden ? 'hidden' : 'visible', listeners: {}, getElementById: name => elements[name], addEventListener(key, fn) { this.listeners[key] = fn } }
-  const pet = { expand: value => requests.push(value), bubbleClosed: () => closed++, ask: value => requests.push(value), cancel() {}, init: () => Promise.resolve({ cfg: { bubbleSeconds: 30, reduceMotion: false, chatEnabled: true }, chatOpen: false }) }
+  const elements = Object.fromEntries(['dialog', 'answer', 'ask', 'q', 'send', 'cancel', 'closeBubble', 'providerName', 'notice', 'noticeTitle', 'noticeDetail', 'noticeChoices', 'noticeElsewhere'].map(name => [name, new Element()]))
+  const answers = []
+  const document = { body: new Element(), visibilityState: hidden ? 'hidden' : 'visible', listeners: {}, getElementById: name => elements[name], addEventListener(key, fn) { this.listeners[key] = fn }, createElement: () => new Element() }
+  const pet = { expand: value => requests.push(value), bubbleClosed: () => closed++, ask: value => requests.push(value), noticeAnswer: (id, answer) => answers.push({ id, ...answer }), cancel() {}, init: () => Promise.resolve({ cfg: { bubbleSeconds: 30, reduceMotion: false, chatEnabled: true }, chatOpen: false }) }
   for (const key of ['ChatVisibility', 'ChatLayout', 'ChatStarted', 'ChatCancelled', 'Delta', 'Done', 'Error', 'RateLimit', 'Cleared', 'Cfg']) pet[`on${key}`] = fn => { callbacks[key] = fn }
   class ClockDate extends Date { static now() { return now } }
   const played = []
@@ -58,7 +64,7 @@ async function renderer({ hidden = false } = {}) {
   const layout = { width: 384, height: 248, originX: 192, originY: 246, side: 'above' }
   function open() { callbacks.ChatVisibility({ open: true, layout }) }
   function finishOpen() { open(); advance(460) }
-  return { evaluate, callbacks, elements, document, advance, frame, frames, timers, requests, layout, open, finishOpen, played, closed: () => closed }
+  return { evaluate, callbacks, elements, document, advance, frame, frames, timers, requests, layout, open, finishOpen, played, answers, closed: () => closed }
 }
 
 test('the bubble pops open from the tail, and native hiding waits until closing completes', async () => {
@@ -187,4 +193,86 @@ test('answers appear one character at a time with a talking sound per character'
   r.advance(1000)
   r.frame()
   assert.equal(r.elements.answer.textContent, '새 대답')
+})
+
+
+test('a permission notice shows the command and sends back exactly the button that was pressed', async () => {
+  const r = await renderer()
+  const view = { id: 'p1', kind: 'permission', from: 'Claude Code · clau', title: '이 명령을 실행해도 될까요?', detail: 'npm test', mono: true, always: true }
+  r.callbacks.ChatVisibility({ open: true, chat: false, notice: view, layout: r.layout })
+  assert.equal(r.document.body.classList.contains('notice-mode'), true)
+  assert.equal(r.elements.noticeTitle.textContent, view.title)
+  assert.equal(r.elements.noticeDetail.textContent, 'npm test')
+  assert.equal(r.elements.providerName.textContent, 'Claude Code · clau')
+  const labels = r.elements.noticeChoices.children.map(b => b.textContent)
+  assert.deepEqual(labels, ['허락', '다음부터 묻지 않기', '거절'])
+  assert.deepEqual(r.played, ['chatOpen'], 'one sound, not the chat greeting')
+  r.elements.noticeChoices.children[2].listeners.click()
+  assert.deepEqual(r.answers, [{ id: 'p1', choice: 'deny' }])
+  r.elements.noticeElsewhere.listeners.click()
+  assert.deepEqual(r.answers.at(-1), { id: 'p1', choice: 'pass' })
+  // 알림이 걷히면 대화 칸으로 돌아오고, 알림만 떠 있던 말풍선은 소리 없이 닫힌다.
+  r.callbacks.ChatVisibility({ open: false, chat: false, notice: null, layout: r.layout })
+  assert.equal(r.document.body.classList.contains('notice-mode'), false)
+  assert.deepEqual(r.played, ['chatOpen'])
+})
+
+test('questions are asked one at a time and every answer goes back keyed by its question', async () => {
+  const r = await renderer()
+  const view = { id: 'q1', kind: 'question', from: 'Claude Code', questions: [
+    { key: 'Which fruit?', question: 'Which fruit?', header: 'Fruit', multi: false, options: [{ label: 'Apple', value: 'Apple', hint: '' }, { label: 'Banana', value: 'Banana', hint: '' }] },
+    { key: 'Which toppings?', question: 'Which toppings?', header: 'Top', multi: true, options: [{ label: 'Nuts', value: 'Nuts', hint: '' }, { label: 'Jam', value: 'Jam', hint: '' }, { label: 'Cream', value: 'Cream', hint: '' }] },
+  ] }
+  r.callbacks.ChatVisibility({ open: true, chat: false, notice: view, layout: r.layout })
+  assert.equal(r.elements.noticeTitle.textContent, 'Which fruit?')
+  assert.equal(r.elements.providerName.textContent, 'Claude Code · Fruit · 1/2')
+  r.elements.noticeChoices.children[1].listeners.click() // Banana
+  assert.equal(r.answers.length, 0)
+  assert.equal(r.elements.noticeTitle.textContent, 'Which toppings?')
+  const [nuts, jam, cream, done] = r.elements.noticeChoices.children
+  assert.equal(done.textContent, '다 골랐어요')
+  assert.equal(done.disabled, true)
+  nuts.listeners.click(); cream.listeners.click(); jam.listeners.click(); jam.listeners.click()
+  done.listeners.click()
+  assert.deepEqual(JSON.parse(JSON.stringify(r.answers)), [{ id: 'q1', choice: 'answers', answers: { 'Which fruit?': 'Banana', 'Which toppings?': 'Nuts, Cream' } }])
+})
+
+test('a finished-work notice is a single line that closes when clicked', async () => {
+  const r = await renderer()
+  r.callbacks.ChatVisibility({ open: true, chat: false, notice: { id: 'i1', kind: 'done', from: 'Claude Code', title: '작업을 다 끝냈어요!', detail: '' }, layout: r.layout })
+  assert.equal(r.elements.noticeTitle.textContent, '작업을 다 끝냈어요!')
+  assert.equal(r.elements.noticeChoices.children.length, 0)
+  assert.deepEqual(r.played, ['chatResult'])
+  r.elements.dialog.listeners.click({ target: r.elements.dialog })
+  assert.deepEqual(r.answers, [{ id: 'i1', choice: 'pass' }])
+})
+
+
+test('approval without a visible plan is left to Claude Code', async () => {
+  const r = await renderer()
+  r.callbacks.ChatVisibility({ open: true, chat: false, notice: { id: 'missing-plan', kind: 'plan', title: '계획대로 시작할까요?', canApprove: false }, layout: r.layout })
+  assert.equal(r.elements.noticeChoices.children.length, 0)
+  assert.equal(r.elements.noticeElsewhere.hidden, false)
+  r.elements.noticeElsewhere.listeners.click()
+  assert.deepEqual(r.answers, [{ id: 'missing-plan', choice: 'pass' }])
+})
+
+test('a custom question answer waits for Korean composition and has a submit button', async () => {
+  const r = await renderer()
+  r.callbacks.ChatVisibility({ open: true, chat: false, notice: { id: 'ime', kind: 'question', questions: [{ key: '이름?', question: '이름?', options: [{ label: '클로', value: '클로' }] }] }, layout: r.layout })
+  r.elements.noticeChoices.children.at(-1).listeners.click()
+  const row = r.elements.noticeChoices.children.at(-1)
+  const [field, submit] = row.children
+  assert.equal(submit.type, 'submit')
+  assert.equal(submit.textContent, '보내기')
+  field.value = '클로'
+  field.listeners.compositionstart()
+  let prevented = false
+  field.listeners.keydown({ key: 'Enter', preventDefault: () => { prevented = true } })
+  row.listeners.submit({ preventDefault() {} })
+  assert.equal(prevented, true)
+  assert.equal(r.answers.length, 0)
+  field.listeners.compositionend()
+  row.listeners.submit({ preventDefault() {} })
+  assert.deepEqual(JSON.parse(JSON.stringify(r.answers)), [{ id: 'ime', choice: 'answers', answers: { '이름?': '클로' } }])
 })

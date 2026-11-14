@@ -29,11 +29,15 @@ let lastTouch = Date.now()
 let limitUntil = 0
 let replied = false // 이번 질문의 대답이 화면에 나타났는가(효과음 한 번만)
 let providerState = null
+let chatOpen = false // 대화가 열려 있는가(알림이 그 위를 잠깐 덮을 수 있다)
+let noticeView = null // 지금 보여 주는 Claude Code 알림
+let noticeStep = { index: 0, answers: {}, picked: new Set() } // 질문이 여러 개면 하나씩
 
+const providerLabel = state => `${{claude:'Claude Code',codex:'Codex',groq:'Groq'}[state?.provider] || '클로'}${state?.fallback ? ' · 자동 전환' : '와 대화'}`
 function showProvider(state) {
   providerState = state
   const label = el('providerName')
-  if (label) label.textContent = `${{claude:'Claude Code',codex:'Codex',groq:'Groq'}[state.provider] || '클로'}${state.fallback ? ' · 자동 전환' : '와 대화'}`
+  if (label && !noticeView) label.textContent = providerLabel(state)
   if (state.fallback) limitUntil = 0
 }
 window.pet.onChatProvider?.(showProvider)
@@ -63,7 +67,7 @@ function setPhase(next) {
 function finishOpen() {
   setPhase('open')
   contentReady(true)
-  if (shown) input.focus({ preventScroll: true })
+  if (shown && chatOpen && !noticeView) input.focus({ preventScroll: true })
 }
 function finishClose() {
   setPhase('closed')
@@ -91,13 +95,17 @@ function animate(target, immediate = false) {
 function scheduleClose() {
   clearTimeout(autoTimer)
   autoTimer = null
-  if (!open || !shown || busy || input.value || cfg.bubbleSeconds <= 0) return
+  if (!open || !chatOpen || noticeView || !shown || busy || input.value || cfg.bubbleSeconds <= 0) return
   const remaining = lastTouch + cfg.bubbleSeconds * 1000 - Date.now()
   if (remaining <= 0) requestClose()
   else autoTimer = setTimeout(requestClose, Math.min(2147483647, remaining))
 }
 function touch() { lastTouch = Date.now(); if (!busy) scheduleClose() }
-function requestClose() { if (open) window.pet.expand(false) }
+function requestClose() {
+  // 알림이 떠 있으면 닫기 = "Claude Code에서 고를래요"(질문은 Claude Code가 직접 묻는다).
+  if (noticeView) return answerNotice({ choice: 'pass' })
+  if (open) window.pet.expand(false)
+}
 function clearPendingText() {
   if (reveal.frame !== null) cancelAnimationFrame(reveal.frame)
   reveal.frame = null
@@ -167,17 +175,175 @@ function waiting() {
 function visibility(state) {
   if (state.layout) applyLayout(state.layout)
   const wasOpen = open
+  const wasChat = chatOpen
   open = !!state.open
+  // 예전 메시지에는 chat이 없다: 그때는 열림 = 대화.
+  chatOpen = typeof state.chat === 'boolean' ? state.chat : open
   shown = document.visibilityState !== 'hidden'
   document.body.classList.toggle('is-hidden', !shown)
+  const notice = state.notice ?? null
+  const fresh = !!notice && notice.id !== noticeView?.id
+  showNotice(notice)
   if (open && !wasOpen) {
     lastTouch = Date.now()
     if (!answer.hasChildNodes()) showText(HINT, true)
-    sound.play('chatOpen')
+    if (!notice) sound.play('chatOpen')
+  } else if (!open && wasOpen && !wasChat) {
+    // 알림만 떠 있다 닫힐 땐 조용히
   } else if (!open && wasOpen) sound.play('chatClose')
+  if (fresh) sound.play(notice.kind === 'done' ? 'chatResult' : 'chatOpen')
+  // 알림이 끝나고 대화로 돌아오면 입력 칸으로.
+  if (!notice && chatOpen && phase === 'open' && shown) input.focus({ preventScroll: true })
   animate(open ? 1 : 0, !!state.immediate)
   scheduleClose()
 }
+
+// ── Claude Code 알림과 고르기 ──────────────────────────────────────────
+const noticeBox = el('notice')
+const noticeTitle = el('noticeTitle')
+const noticeDetail = el('noticeDetail')
+const noticeChoices = el('noticeChoices')
+const noticeElsewhere = el('noticeElsewhere')
+
+function answerNotice(answer) {
+  if (!noticeView) return
+  const id = noticeView.id
+  window.pet.noticeAnswer?.(id, answer)
+}
+
+function button(label, onClick, { primary = false, hint = '', picked = false } = {}) {
+  const b = document.createElement('button')
+  b.type = 'button'
+  b.className = `choice${primary ? ' primary' : ''}${picked ? ' picked' : ''}`
+  b.textContent = label
+  if (hint) {
+    const small = document.createElement('small')
+    small.textContent = hint
+    b.appendChild(small)
+    b.title = hint
+  }
+  b.addEventListener('click', onClick)
+  noticeChoices.appendChild(b)
+  return b
+}
+
+function showNotice(view) {
+  const same = view && noticeView && view.id === noticeView.id
+  noticeView = view
+  document.body.classList.toggle('notice-mode', !!view)
+  document.body.classList.toggle('info', !!view && (view.kind === 'done' || view.kind === 'limit'))
+  noticeBox.hidden = !view
+  const label = el('providerName')
+  if (!view) {
+    if (label) label.textContent = providerLabel(providerState || { provider: cfg.chatProvider || 'claude' })
+    noticeChoices.replaceChildren()
+    return
+  }
+  if (same) return
+  noticeStep = { index: 0, answers: {}, picked: new Set() }
+  renderNotice()
+}
+
+function renderNotice() {
+  const view = noticeView
+  const label = el('providerName')
+  noticeChoices.replaceChildren()
+  noticeChoices.classList.remove('list')
+  noticeDetail.hidden = true
+  noticeDetail.classList.remove('mono')
+  noticeDetail.scrollTop = 0
+  noticeElsewhere.hidden = true
+  if (label) label.textContent = view.from || 'Claude Code'
+  const detail = (text, mono = false) => {
+    if (!text) return
+    noticeDetail.textContent = text
+    noticeDetail.classList.toggle('mono', mono)
+    noticeDetail.hidden = false
+    noticeDetail.setAttribute('tabindex', '0')
+    noticeDetail.setAttribute('aria-label', '요청 상세 내용')
+  }
+  if (view.kind === 'done' || view.kind === 'limit') {
+    noticeTitle.textContent = view.title
+    detail(view.detail)
+    return
+  }
+  noticeElsewhere.hidden = false
+  noticeElsewhere.textContent = view.kind === 'plan' ? 'Claude Code에서 볼래요' : 'Claude Code에서 고를래요'
+  if (view.kind === 'permission') {
+    noticeTitle.textContent = view.title
+    detail(view.detail, view.mono)
+    if (view.canApprove !== false) button('허락', () => answerNotice({ choice: 'allow' }), { primary: true })
+    if (view.canApprove !== false && view.always) button('다음부터 묻지 않기', () => answerNotice({ choice: 'always' }))
+    button('거절', () => answerNotice({ choice: 'deny' }))
+    return
+  }
+  if (view.kind === 'plan') {
+    noticeTitle.textContent = view.title
+    detail(view.detail)
+    if (view.canApprove !== false) button('계획대로 시작', () => answerNotice({ choice: 'allow' }), { primary: true })
+    return
+  }
+  // 질문: 하나씩 보여 주고, 다 고르면 한꺼번에 돌려준다.
+  const q = view.questions[noticeStep.index]
+  if (!q) return answerNotice({ choice: 'pass' })
+  const total = view.questions.length
+  if (label) label.textContent = `${view.from || 'Claude Code'}${q.header ? ` · ${q.header}` : ''}${total > 1 ? ` · ${noticeStep.index + 1}/${total}` : ''}`
+  noticeTitle.textContent = q.question
+  if (q.options.some(o => o.hint)) noticeChoices.classList.add('list')
+  const next = value => {
+    noticeStep.answers[q.key] = value
+    noticeStep.index++
+    noticeStep.picked = new Set()
+    if (noticeStep.index >= total) answerNotice({ choice: 'answers', answers: noticeStep.answers })
+    else renderNotice()
+  }
+  for (const option of q.options) {
+    const b = button(option.label, () => {
+      if (!q.multi) return next(option.value)
+      if (noticeStep.picked.has(option.value)) noticeStep.picked.delete(option.value)
+      else noticeStep.picked.add(option.value)
+      b.classList.toggle('picked', noticeStep.picked.has(option.value))
+      done.disabled = noticeStep.picked.size === 0
+    }, { hint: option.hint })
+  }
+  const done = q.multi ? button('다 골랐어요', () => next(q.options.filter(o => noticeStep.picked.has(o.value)).map(o => o.value).join(', ')), { primary: true }) : null
+  if (done) done.disabled = true
+  // 보기에 없는 답: 직접 적는다.
+  const other = button('직접 쓸래요', () => {
+    other.remove()
+    const row = document.createElement('form')
+    row.id = 'noticeOther'
+    const field = document.createElement('input')
+    field.type = 'text'
+    field.maxLength = 2000
+    field.placeholder = '답을 적어 주세요'
+    field.setAttribute('aria-label', '직접 쓴 답')
+    row.appendChild(field)
+    const submit = document.createElement('button')
+    submit.type = 'submit'
+    submit.className = 'choice'
+    submit.textContent = '보내기'
+    row.appendChild(submit)
+    let composing = false
+    field.addEventListener('compositionstart', () => { composing = true })
+    field.addEventListener('compositionend', () => { composing = false })
+    field.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && (composing || event.isComposing || event.keyCode === 229)) event.preventDefault()
+    })
+    row.addEventListener('submit', event => {
+      event.preventDefault()
+      if (composing || event.isComposing || !field.value.trim()) return
+      next(field.value.trim())
+    })
+    noticeChoices.appendChild(row)
+    field.focus()
+  })
+}
+noticeElsewhere.addEventListener('click', () => answerNotice({ choice: 'pass' }))
+// 끝·한도 알림은 눌러서 닫는다.
+dialog.addEventListener('click', event => {
+  if (noticeView && (noticeView.kind === 'done' || noticeView.kind === 'limit') && event.target !== close) answerNotice({ choice: 'pass' })
+})
 
 form.addEventListener('submit', event => {
   event.preventDefault()

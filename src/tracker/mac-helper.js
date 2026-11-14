@@ -39,11 +39,13 @@ function run(argv) {
   const out = $.NSFileHandle.fileHandleWithStandardOutput
   const say = text => out.writeData($(text + '\n').dataUsingEncoding($.NSUTF8StringEncoding))
   const options = (listing ? $.kCGWindowListOptionAll : $.kCGWindowListOptionOnScreenOnly) | $.kCGWindowListExcludeDesktopElements
-  // 따라붙을 창이 2초 넘게 그대로면 0.35초마다, 움직이기 시작하면 다시 0.15초마다 살핀다.
-  // 창 목록 전체를 0.15초마다 읽는 일은 가볍지 않아서, 가만히 있을 때까지 그렇게 할 필요는 없다.
+  // 따라붙을 창이 막 움직였으면 0.1초마다(부드럽게 따라가게), 잠잠하면 0.15초, 2초 넘게 그대로면 0.4초마다 살핀다.
+  // 클로가 숨어 있을 땐(다른 앱이 앞) 앞에 나온 앱만 0.5초마다 본다.
+  // 창 목록 전체를 자주 읽는 일은 가볍지 않아서, 가만히 있을 때까지 그렇게 할 필요는 없다.
   let quietSince = Date.now()
-  const pause = () => {
-    const seconds = Date.now() - quietSince > 2000 ? 0.35 : 0.15
+  const pause = visible => {
+    const quiet = Date.now() - quietSince
+    const seconds = !visible ? 0.5 : quiet < 500 ? 0.1 : quiet > 2000 ? 0.4 : 0.15
     const until = Date.now() + seconds * 1000
     $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(seconds))
     // An empty run loop may return early; never turn that into a busy loop.
@@ -58,7 +60,7 @@ function run(argv) {
   for (let i = 0; i < 4000; i++) {
     const frontApp = listing ? null : foreground()
     const visible = !frontApp || showWhen === 'open' || frontApp.active === 'target' || frontApp.active === 'ours'
-    const scan = listing || visible || !cachedMessage || Date.now() - lastScan >= 2000
+    const scan = listing || visible || !cachedMessage || Date.now() - lastScan >= 5000
     let msg
     if (scan) {
       const list = ObjC.deepUnwrap($.CFMakeCollectable($.CGWindowListCopyWindowInfo(options, 0))) || []
@@ -88,6 +90,6 @@ function run(argv) {
       if (text !== last) { last = text; say(text); quietSince = Date.now() }
     }
     // Service AppKit's run loop so frontmostApplication stays current.
-    pause()
+    pause(visible)
   }
 }

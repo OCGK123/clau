@@ -10,6 +10,12 @@
     <section id="dialog" aria-label="클로와 대화">
       <div class="bubble-head"><span id="providerName">클로와 대화</span><button id="closeBubble" type="button" aria-label="말풍선 닫기" title="닫기 (Esc)">×</button></div>
       <div id="answer" role="status" aria-live="polite" aria-atomic="true"></div>
+      <div id="notice" hidden>
+        <p id="noticeTitle" tabindex="0"></p>
+        <p id="noticeDetail" hidden></p>
+        <div id="noticeChoices" role="group"></div>
+        <button id="noticeElsewhere" type="button" class="quiet" hidden>Claude Code에서 고를래요</button>
+      </div>
       <form id="ask">
         <input id="q" type="text" aria-label="클로에게 할 말" maxlength="12000" placeholder="뭐든 물어봐" autocomplete="off" spellcheck="false" />
         <button id="cancel" type="button" aria-label="답변 중단" title="답변 중단" hidden>■</button>

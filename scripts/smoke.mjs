@@ -17,7 +17,11 @@ if (process.platform === 'linux') {
   args = ['-a', electron, ...args, '--no-sandbox', '--ozone-platform=x11']
 }
 if (process.platform === 'win32') throw new Error('The UI smoke runner requires Linux with xvfb-run or macOS; unit tests run on all platforms.')
-const result = spawnSync(command, args, { cwd: root, env: { ...process.env, CLAU_NATIVE: '1', CLAU_SHOT: output, CLAU_TEST_CLI: fakeCli }, stdio: 'inherit', timeout: 60000 })
-if (result.error) console.error(result.error.message)
+const result = spawnSync(command, args, { cwd: root, env: { ...process.env, CLAU_NATIVE: '1', CLAU_SHOT: output, CLAU_TEST_CLI: fakeCli }, stdio: 'inherit', detached: process.platform !== 'win32', timeout: 120000 })
+if (result.error) {
+  console.error(result.error.message)
+  // xvfb-run만 끝내면 Electron이 가상 화면에 남을 수 있으므로 테스트 그룹도 함께 정리한다.
+  if (process.platform !== 'win32' && result.pid) { try { process.kill(-result.pid, 'SIGKILL') } catch {} }
+}
 console.log(`Screenshots and check results: ${output}`)
 process.exit(result.status ?? 1)

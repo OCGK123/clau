@@ -1,6 +1,8 @@
 // 클로(Clau) 연동.
 // Claude가 지금 무엇을 하는지 ~/.claude/clau/state.json 에 적으면 클로가 그걸 보고 표정을 바꾼다.
 // /clau 명령으로 클로를 부르고, 세션을 열 때 같이 깨운다. 이 mod는 아무것도 그리지 않는다.
+// 일이 끝나거나 한도에 닿으면 클로에게 알리고(말풍선), 권한·질문·계획 승인을 클로 말풍선에서 고르게 한다.
+// 클로가 안 떠 있거나 안 보이면 Claude Code가 늘 하던 대로 직접 묻는다.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
@@ -30,8 +32,9 @@ async function statePath($: EngineInterface): Promise<string | undefined> {
   return stateFile
 }
 
-/** Where the app lives; it writes this every time it starts. */
-type AppInfo = { exec: string; args?: string[]; platform?: string; wake?: boolean }
+/** Where the app lives; it writes this every time it starts. port/token: its local notice door. */
+type AppInfo = { exec: string; args?: string[]; platform?: string; wake?: boolean; port?: number; token?: string; notices?: boolean; ask?: boolean }
+type AskReply = { state: 'answered' | 'pending' | 'pass'; answer?: { choice: string; answers?: Record<string, string> } }
 
 async function appInfo($: EngineInterface): Promise<AppInfo | undefined> {
   const dir = await clauDir($)
@@ -62,6 +65,53 @@ async function launch($: EngineInterface, flags: string[]): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/** The app's notice door: a POST to 127.0.0.1 with the key it left in app.json. undefined when it is not up. */
+async function door<T>($: EngineInterface, app: AppInfo | undefined, path: string, body: unknown): Promise<T | undefined> {
+  if (!app?.port || !app.token) return undefined
+  try {
+    const res = await $.http.fetch(`http://127.0.0.1:${app.port}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-clau-token': app.token },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) return undefined
+    return res.text ? (JSON.parse(res.text) as T) : ({} as T)
+  } catch {
+    return undefined
+  }
+}
+
+let project: string | undefined
+const folderName = (cwd?: string) => (cwd ? cwd.split(/[\\/]+/).filter(Boolean).pop() : undefined)
+
+/** Tells the pet something happened (work done, usage limit). Never waits on it. */
+async function notify($: EngineInterface, kind: 'done' | 'limit', extra: Record<string, unknown> = {}) {
+  if (isMuted) return
+  const app = await appInfo($)
+  if (!app || app.notices === false) return
+  await door($, app, '/notify', { kind, project, ...extra })
+}
+
+let asked = 0
+/** What Claude Code should do with the pet's answer; undefined lets Claude Code ask as usual. */
+function decide(kind: string, input: unknown, suggestions: unknown, answer: AskReply['answer']) {
+  if (!answer) return undefined
+  const given = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  if (kind === 'question') {
+    if (answer.choice !== 'answers' || !answer.answers) return undefined
+    return { behavior: 'allow' as const, updatedInput: { ...given, answers: answer.answers } }
+  }
+  if (kind === 'plan') return answer.choice === 'allow' ? { behavior: 'allow' as const, updatedInput: given } : undefined
+  if (answer.choice === 'allow') return { behavior: 'allow' as const }
+  if (answer.choice === 'always') {
+    return Array.isArray(suggestions) && suggestions.length
+      ? { behavior: 'allow' as const, updatedPermissions: suggestions as never }
+      : { behavior: 'allow' as const }
+  }
+  if (answer.choice === 'deny') return { behavior: 'deny' as const, message: '클로 말풍선에서 거절했어요.', interrupt: true as const }
+  return undefined
 }
 
 const COMMANDS: Record<string, { flag: string; said: string }> = {
@@ -109,13 +159,16 @@ function scheduleWake($: EngineInterface, resetsAt?: string) {
 
 async function sleepUntil($: EngineInterface, resetsAt?: string) {
   if (isMuted) return
+  const already = liveMode === 'sleeping'
   await setMode($, 'sleeping', resetsAt)
   scheduleWake($, resetsAt)
+  if (!already) await notify($, 'limit', resetsAt ? { resetsAt } : {})
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     isMuted = (await $.env.get('CLAU_CHAT')) === '1'
+    project = folderName(e.cwd)
     if (!isMuted) {
       await $.command.register({
         name: 'clau',
@@ -168,10 +221,73 @@ export const register: Register = on => {
   })
 
   // The turn's end: happy for an answer, oops for an error or an interruption.
+  // An answer also pops "작업을 다 끝냈어요!" over the pet.
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) await moodTo($, e.reason === 'answer' ? 'happy' : 'oops')
+    if (e.agentId === undefined) {
+      await moodTo($, e.reason === 'answer' ? 'happy' : 'oops')
+      if (e.reason === 'answer') void notify($, 'done')
+    }
     return next(e)
   })
+
+  // Something only the person can decide (a tool permission, a question, a plan): show it in the pet's bubble
+  // and hand back what they pick. While this waits Claude Code shows no dialog of its own, so the app says
+  // "pass" at once when the pet is not on screen, and after a few minutes with no answer.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    if (isMuted) return next(e)
+    if (next.signal.aborted) return next(e)
+    const app = await appInfo($)
+    if (!app?.port || !app.token || app.notices === false || app.ask === false) return next(e)
+    const kind = e.tool_name === 'AskUserQuestion' ? 'question' : e.tool_name === 'ExitPlanMode' ? 'plan' : 'permission'
+    const id = `${e.session_id}-${Date.now().toString(36)}-${++asked}`
+    const body = {
+      id,
+      kind,
+      session: e.session_id,
+      project: folderName(e.cwd) ?? project,
+      cwd: e.cwd,
+      tool: e.tool_name,
+      input: e.tool_input,
+      suggestions: e.permission_suggestions ?? [],
+    }
+    // Answered in Claude Code itself, or interrupted: take the bubble down.
+    let over = false
+    const cancel = () => {
+      if (over) return
+      over = true
+      void door($, app, '/cancel', { id })
+    }
+    let answered = false
+    next.signal.addEventListener('abort', cancel)
+    // Aborting while appInfo was being read must not create a new request.
+    if (next.signal.aborted) cancel()
+    try {
+      // The app holds each request up to 20 s and gives up after 3 minutes; ask again while it says pending.
+      for (let round = 0; round < 15 && !over; round++) {
+        const reply = await door<AskReply>($, app, '/ask', body)
+        // A response that raced with cancellation must never authorize a tool.
+        if (over || next.signal.aborted || !reply || reply.state === 'pass') break
+        if (reply.state === 'pending') continue
+        if (reply.state !== 'answered') break
+        const decision = decide(kind, e.tool_input, e.permission_suggestions, reply.answer)
+        if (decision) {
+          answered = true
+          over = true
+          return { decision }
+        }
+        break
+      }
+    } finally {
+      next.signal.removeEventListener('abort', cancel)
+      // A failed poll, malformed response or exhausted polling budget also hands the UI back.
+      // Otherwise its stale bubble could later authorize an operation Claude Code no longer awaits.
+      if (!answered) {
+        over = true
+        await door($, app, '/cancel', { id })
+      }
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e)) // a failure here must never block: Claude Code asks as usual
 
   // Usage limit hit: a turn stopped on a rate-limit error.
   on('classic.StopFailure', async ($, e, next) => {

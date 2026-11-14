@@ -24,16 +24,29 @@ const STALE_MS = 10 * 60_000 // Claude Code 쪽 상태가 이보다 오래되면
 const DRAG_START_PX = 4
 const PAT_COMBO_MS = 600 // 이 안에 또 누르면 연타로 친다
 const MAX_HEARTS = 8
+// 새 반응들의 길이(ms)
+const YAWN_MS = 2400 // 졸기 전에 하품
+const STRETCH_MS = 1100 // 졸다 깨면 기지개
+const SURPRISE_MS = 850 // Claude Code가 부르면 깜짝
+const GREET_MS = 1300 // 오래 숨어 있다 나타나면 반갑게 폴짝
+const GREET_AFTER_MS = 2 * 60_000
+const DIZZY_MS = 2300 // 세게 흔들고 놓으면 어질어질
+const DIZZY_SWING_DEG = 420 // 들고 있는 동안 이만큼(도) 넘게 흔들리면 어지럽다
+const SHY_PATS = 7 // 이만큼 연달아 쓰다듬으면 부끄
+const SHY_MS = 1800
+const GIGGLE_MS = 450 // 머리를 문지르는 동안 킥킥(손을 멈추면 이만큼 뒤에 그친다)
+const GIGGLE_RUB_PX = 90 // 0.6초 안에 이만큼 문지르면 간지럽다
 const HINT = '안녕! 난 클로야. 만나서 반가워!!!!!!'
 const HEART = '<svg viewBox="0 0 20 18"><path d="M10 16.6C4.2 12.3 1.2 9.5 1.2 6a4.5 4.5 0 0 1 8.8-1.4A4.5 4.5 0 0 1 18.8 6c0 3.5-3 6.3-8.8 10.6z"/></svg>'
 
 // 그리는 순서: 작은 친구 → 몸 → 눈 → 입 → 앞머리
-const BODY_ROLES = ['base', 'eyes_open', 'eyes_closed', 'eyes_happy', 'eyes_x', 'eyes_petted', 'mouth_closed', 'mouth_open', 'mouth_sleep', 'hair']
+const BODY_ROLES = ['base', 'eyes_open', 'eyes_closed', 'eyes_happy', 'eyes_x', 'eyes_petted', 'mouth_closed', 'mouth_open', 'mouth_sleep', 'mouth_pout', 'hair']
 
 let cfg
 let layers
 let bust = 0.69
 let mode = 'idle'
+let thinkingFace = 'closed' // 생각에 들어갈 때 한 번 고른다: 원래 감은 눈 / 위를 보는 삐쭉 입
 let scale = 1 // 그림 좌표 → 화면 px
 let visible = true
 let mainVisible = true
@@ -41,6 +54,11 @@ let geometry = null
 let stateTimer = null
 let pausedAnimations = []
 const imgs = {}
+let faceEl = null // 눈·입·앞머리·볼을 묶은 상자: 몸이 뛰면 살짝 늦게 따라와 출렁인다
+let markLayer = null // 머리 위 작은 표시(!, ?, 땀방울)
+let blushEl = null
+const POUT = '<svg viewBox="0 0 44 28" width="100%" height="100%" aria-hidden="true"><path d="M6 9 35 6v15" fill="none" stroke="#3f1909" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+const BLUSH = '<svg viewBox="0 0 306 72" width="100%" height="100%" aria-hidden="true"><defs><radialGradient id="blushFill"><stop offset="0" stop-color="#ff7f91" stop-opacity="0.78"/><stop offset="0.7" stop-color="#ff8c9b" stop-opacity="0.45"/><stop offset="1" stop-color="#ff8c9b" stop-opacity="0"/></radialGradient></defs><ellipse cx="61" cy="34" rx="31" ry="16" fill="url(#blushFill)"/><ellipse cx="251" cy="34" rx="31" ry="16" fill="url(#blushFill)"/><g stroke="#c24a57" stroke-width="3.2" stroke-linecap="round"><path d="M45 41l6-12M56 41l6-12M67 41l6-12M235 41l6-12M246 41l6-12M257 41l6-12"/></g></svg>'
 
 const rand = (lo, hi) => lo + Math.random() * (hi - lo)
 
@@ -51,9 +69,18 @@ function viewRect() {
 
 function build() {
   const make = (role, parent, cls) => {
-    const layerRole = role === 'eyes_petted' ? 'eyes_x' : role
+    const layerRole = role === 'eyes_petted' ? 'eyes_x' : role === 'mouth_pout' ? 'mouth_closed' : role
     if (!layers.layers[layerRole]) return
     if (role === 'eyes_open') return makeEyes(parent, cls)
+    if (role === 'mouth_pout') {
+      const mouth = document.createElement('div')
+      mouth.dataset.role = role
+      mouth.className = cls
+      mouth.innerHTML = POUT
+      parent.appendChild(mouth)
+      imgs[role] = mouth
+      return
+    }
     const img = document.createElement('img')
     img.dataset.role = role
     img.className = cls
@@ -63,8 +90,19 @@ function build() {
     imgs[role] = img
   }
   make('buddy', buddyEl, '')
-  for (const role of BODY_ROLES) make(role, bodyEl, role.startsWith('eyes') ? 'eyes' : role.startsWith('mouth') ? 'mouth' : '')
-  window.PetAnimator.attach(moverEl, imgs.buddy ?? null)
+  // 얼굴은 몸 그림(base) 위에 따로 묶는다: 볼 → 눈 → 입 → 앞머리 순서.
+  faceEl = document.createElement('div')
+  faceEl.className = 'face'
+  blushEl = document.createElement('div')
+  blushEl.className = 'blush'
+  blushEl.innerHTML = BLUSH
+  faceEl.appendChild(blushEl)
+  for (const role of BODY_ROLES) make(role, role === 'base' ? bodyEl : faceEl, role.startsWith('eyes') ? 'eyes' : role.startsWith('mouth') ? 'mouth' : '')
+  bodyEl.appendChild(faceEl)
+  markLayer = document.createElement('div')
+  markLayer.className = 'marks'
+  bodyEl.appendChild(markLayer)
+  window.PetAnimator.attach(moverEl, imgs.buddy ?? null, { float: buddyEl, face: faceEl, zs: [...petEl.querySelectorAll('.z')] })
   window.PetFx.attach(el('fx'))
 }
 
@@ -141,10 +179,22 @@ function layout() {
     node.style.height = `${h * s}px`
   }
   for (const role of BODY_ROLES) {
-    if (imgs[role]) put(imgs[role], layers.layers[role === 'eyes_petted' ? 'eyes_x' : role])
+    if (!imgs[role]) continue
+    if (role === 'mouth_pout') {
+      const [x, y, w] = layers.layers.mouth_closed
+      put(imgs[role], [x, y - 4, w, w * 28 / 44])
+    } else put(imgs[role], layers.layers[role === 'eyes_petted' ? 'eyes_x' : role])
   }
   // 작은 친구는 둥실거리는 상자째로 자리를 잡는다.
   if (layers.layers.buddy) put(buddyEl, layers.layers.buddy)
+  // 얼굴 묶음은 두 눈 한가운데를 축으로 출렁이고, 볼은 눈 아래 양쪽에 붙는다.
+  const face = layers.layers.eyes_open
+  if (face && faceEl) {
+    const [ex, ey, ew, eh] = face
+    faceEl.style.transformOrigin = `${((ex - vx + ew / 2) * s).toFixed(1)}px ${((ey - vy + eh / 2) * s).toFixed(1)}px`
+    window.PetAnimator.setFaceAnchor?.((vh - (ey - vy + eh / 2)) * s)
+    if (blushEl) put(blushEl, [ex, ey + eh * 0.65, ew, eh * 0.65])
+  }
 
   // 마우스 따라보기: 두 눈 한가운데(stage 기준)와 움직일 수 있는 폭.
   const eyes = layers.layers.eyes_open
@@ -171,15 +221,24 @@ function layout() {
 // ── 마우스 따라보기 ───────────────────────────────────────────────────
 let eyeAim = null // 눈 가운데와 움직일 수 있는 폭
 let look = null // 펫 창 기준 마우스 자리
+let lookShown = '' // 마지막으로 그린 눈동자 자리: 같으면 다시 그리지 않는다(마우스가 멀리 있으면 거의 안 바뀐다)
+function setLook(x, y) {
+  const key = `${x.toFixed(1)},${y.toFixed(1)}`
+  if (key === lookShown) return
+  lookShown = key
+  petEl.style.setProperty('--look-x', `${+x.toFixed(1)}px`)
+  petEl.style.setProperty('--look-y', `${+y.toFixed(1)}px`)
+}
 function aimEyes() {
   const s = geometry?.stage
   // 눈동자가 보일 때만 따라본다(감은 눈, X 눈, 웃는 눈일 때는 쉰다).
   if (petEl.dataset.eyes !== 'open') return
-  if (!look || !eyeAim || !s || !cfg?.lookAtCursor || cfg.reduceMotion) {
-    petEl.style.setProperty('--look-x', '0px')
-    petEl.style.setProperty('--look-y', '0px')
-    return
-  }
+  // 생각 표정의 눈동자는 마우스 설정·움직임 줄이기와 무관한 고정 포즈다.
+  // 기존 눈 마스크 안에서만 움직여 크기·뒤집힘이 달라도 흰자 밖으로 새지 않는다.
+  if (mode === 'thinking' && thinkingFace === 'up' && eyeAim) return setLook(0, -eyeAim.reachY * 4)
+  // 선택지를 띄워 놓고 기다리는 동안은 말풍선(머리 위)을 올려다본다.
+  if (mode === 'asking' && eyeAim && !cfg?.reduceMotion) return setLook(0, -eyeAim.reachY * 0.9)
+  if (!look || !eyeAim || !s || !cfg?.lookAtCursor || cfg.reduceMotion) return setLook(0, 0)
   const dx = look.x - (s.left + eyeAim.x)
   const dy = look.y - (s.top + eyeAim.y)
   const distance = Math.hypot(dx, dy) || 1
@@ -188,11 +247,12 @@ function aimEyes() {
   let x = (dx / distance) * reach * eyeAim.reachX
   const y = (dy / distance) * reach * eyeAim.reachY
   if (cfg.flip) x = -x // 뒤집힌 그림 안에서는 좌우가 반대
-  petEl.style.setProperty('--look-x', `${x.toFixed(2)}px`)
-  petEl.style.setProperty('--look-y', `${y.toFixed(2)}px`)
+  setLook(x, y)
 }
-// 배터리로 돌 때는 가만히 있는 동안의 숨쉬기를 쉰다.
-window.pet.onPower?.(state => window.PetAnimator.setIdleMotion(!state?.battery))
+// 전원이 바뀌어도 숨쉬기·몸짓은 유지하고, 같은 움직임을 덜 자주 그린다.
+window.pet.onPower?.(state => {
+  window.PetAnimator.setLowPower?.(!!state?.battery)
+})
 
 window.pet.onLook?.(point => {
   look = point
@@ -259,6 +319,26 @@ function fxAtHead(kind, count, spread) {
 const SPINNER_OUT_MS = 180 // pet.css spinner-out 길이와 맞춘다
 const SPINNER_TOP_PX = 3 // 창 위쪽 끝에 붙어 살이 잘리지 않게
 let spinnerTimer = null
+let spinTimer = null // (예전 이름) 지금은 몸짓 루프에 걸려 있는지 표시
+let spinStep = -1
+// 12갈래 살: 맨 위가 가장 진하고 시계 반대 방향으로 옅어진다. 1초에 12번, 30도씩 돌린다.
+// 따로 타이머를 돌리지 않고 몸짓 엔진의 프레임에 얹는다(같은 프레임에 같이 그려서 화면을 덜 자주 다시 그린다).
+spinner.querySelectorAll?.('rect').forEach((r, i) => { r.style.opacity = String(1 - (0.85 * ((12 - i) % 12)) / 12) })
+function spin() {
+  spinTimer = null
+  if (spinner.hidden || !visible) return window.PetAnimator.tick?.('spinner', null)
+  spinTimer = true
+  window.PetAnimator.tick?.('spinner', at => {
+    if (spinner.hidden || !visible) { spinTimer = null; return false }
+    const step = Math.floor(at / (1000 / 12)) % 12
+    if (step !== spinStep) {
+      spinStep = step
+      const svg = spinner.firstElementChild
+      if (svg) svg.style.rotate = `${step * 30}deg`
+    }
+    return true
+  }, 12)
+}
 function placeSpinner() {
   const z = headZone()
   const size = spinner.offsetWidth || 46
@@ -285,11 +365,14 @@ function showSpinner(on) {
       spinner.hidden = false
       placeSpinner()
     }
+    if (!spinTimer) spin()
   } else if (!spinner.hidden && !spinner.classList.contains('leaving')) {
     spinner.classList.add('leaving')
     spinnerTimer = setTimeout(() => {
       spinner.hidden = true
       spinner.classList.remove('leaving')
+      window.PetAnimator.tick?.('spinner', null)
+      spinTimer = null
     }, SPINNER_OUT_MS)
   }
 }
@@ -317,24 +400,67 @@ function play(node, frames, duration, easing = 'ease-out') {
 
 function setMode(next) {
   if (next === mode) return
+  const before = mode
   mode = next
+  if (mode === 'thinking') thinkingFace = Math.random() < 0.5 ? 'closed' : 'up'
+  petEl.dataset.thinking = mode === 'thinking' ? thinkingFace : ''
   petEl.className = petEl.className.replace(/\bmode-\S+/g, '').trim() + ` mode-${mode}`
   window.PetAnimator.setMode(mode)
   if (mode === 'happy') fxAtHead('sparkle', 6, 1.8)
   showSpinner(mode === 'thinking')
   applyFace()
+  marksFor(mode, before)
+  aimEyes()
+}
+
+// ── 머리 위 작은 표시 ───────────────────────────────────────────────────
+let askMark = null // 선택지를 기다리는 동안 떠 있는 물음표를 치우는 함수
+/** 머리 위 한 점(창 기준 비율)을 표시 층(몸 안쪽, 뒤집힘 포함) 좌표로. */
+function markPoint(fx, fy) {
+  const z = headZone()
+  const x = z.left + z.width * fx - (parseFloat(petEl.style.left) || 0)
+  const y = z.top + z.height * fy - (parseFloat(petEl.style.top) || 0)
+  return { x: cfg.flip ? (parseFloat(petEl.style.width) || 0) - x : x, y }
+}
+function popMark(kind, fx, fy, options = {}) {
+  if (!markLayer || !layers || !visible || cfg.reduceMotion) return () => {}
+  const p = markPoint(fx, fy)
+  const size = Math.max(20, Math.round((geometry?.shape?.unit ?? cfg.size) * 0.15))
+  const remove = window.PetFx.mark?.(kind, markLayer, p.x, p.y, size, options) ?? (() => {})
+  // 뒤집힌 그림 안에서도 글자(?, !)는 바로 보이게.
+  if (cfg.flip) markLayer.lastChild?.style?.setProperty?.('scale', '-1 1')
+  return remove
+}
+/** 상태가 바뀔 때 머리 위에 표시를 띄우거나 치운다. */
+function marksFor(next, before) {
+  if (next !== 'asking' && askMark) { askMark(); askMark = null }
+  if (next === before) return
+  if (next === 'surprised') popMark('bang', 0.9, 0.3, { life: 900, lean: 12 })
+  else if (next === 'asking' && !askMark) askMark = popMark('ask', 0.92, 0.28, { life: 0, lean: 14 })
+  else if (next === 'oops') popMark('sweat', 1.0, 0.95, { life: 1300, lean: 18 })
+  else if (next === 'dizzy' && layers && visible && !cfg.reduceMotion) { const p = headPoint(); window.PetFx.orbit?.(p.x, p.y - headZone().height * 0.1, headZone().width * 0.42, DIZZY_MS - 300) }
+  else if (next === 'shy') { heart(); heart(); heart() }
+  else if (next === 'greet') fxAtHead('sparkle', 4, 1.2)
 }
 
 function applyFace() {
   if (!cfg || !layers) return
   clearTimeout(blinkTimer)
   clearTimeout(flapTimer)
+  stopMouthPop()
   clearBlinkFx()
-  const eyes = { held: 'x', thinking: 'closed', sleeping: 'closed', dozing: 'closed', happy: 'happy', pleased: 'happy', oops: 'x', petted: 'petted' }[mode] ?? 'open'
-  const mouth = { sleeping: 'sleep', oops: 'sleep' }[mode] ?? 'closed'
+  const thinkingUp = mode === 'thinking' && thinkingFace === 'up'
+  const eyes = thinkingUp ? 'open' : {
+    held: 'x', thinking: 'closed', sleeping: 'closed', dozing: 'closed', happy: 'happy', pleased: 'happy', oops: 'x', petted: 'petted',
+    yawn: 'closed', stretch: 'closed', shy: 'happy', dizzy: 'x', greet: 'happy', giggle: 'happy',
+  }[mode] ?? 'open'
+  const mouth = thinkingUp ? 'pout' : { sleeping: 'sleep', oops: 'sleep', dizzy: 'sleep', yawn: 'yawn', stretch: 'small', surprised: 'small', greet: 'open', giggle: 'open' }[mode] ?? 'closed'
   const changed = petEl.dataset.eyes !== eyes
   petEl.dataset.eyes = eyes
   petEl.dataset.mouth = mouth
+  petEl.classList.toggle('eyes-wide', mode === 'surprised')
+  // 부끄러울 때, 간지러울 때, 부끄럼 뒤 기분 좋을 때 볼이 진해진다.
+  petEl.dataset.blush = mode === 'shy' || mode === 'giggle' || (mode === 'pleased' && Date.now() < blushUntil) ? 'on' : 'off'
   // 표정이 바뀌는 순간 눈이 한 번 통 튄다.
   if (changed) {
     play(imgs[EYE_ROLE[eyes]], [{ transform: 'scale(0.9, 0.62)' }, { transform: 'scale(1.05, 1.12)', offset: 0.55 }, { transform: 'scale(1, 1)' }], 240)
@@ -389,12 +515,35 @@ function blink(times) {
   }, BLINK_CLOSE_MS)
 }
 
+/** 입이 톡 벌어지는 움직임도 몸짓 루프에 얹는다: 따로 60fps 애니메이션을 돌리지 않는다. */
+function stopMouthPop() {
+  window.PetAnimator.tick?.('mouth-pop', null)
+  if (imgs.mouth_open) imgs.mouth_open.style.transform = ''
+}
+function mouthPop() {
+  const node = imgs.mouth_open
+  if (!node || cfg.reduceMotion || !visible) return
+  if (!window.PetAnimator.tick) return play(node, [{ transform: 'scale(0.82, 0.55)' }, { transform: 'scale(1, 1)' }], 80)
+  const start = performance.now()
+  node.style.transform = 'scale(0.82, 0.55)'
+  window.PetAnimator.tick('mouth-pop', at => {
+    if (!visible || cfg.reduceMotion || mode !== 'talking') { node.style.transform = ''; return false }
+    const p = Math.min(1, Math.max(0, (at - start) / 80))
+    if (p === 1) { node.style.transform = ''; return false }
+    const ease = 1 - (1 - p) ** 3
+    node.style.transform = `scale(${(0.82 + 0.18 * ease).toFixed(4)}, ${(0.55 + 0.45 * ease).toFixed(4)})`
+    return true
+  }, 24)
+}
+
 /** 말하는 동안: 입이 랜덤한 간격으로 열렸다 닫히고, 가끔 단어 사이처럼 잠깐 쉰다. */
 function flap(open) {
   if (!visible) return
   open = Math.random() < 0.8 ? !open : open
   petEl.dataset.mouth = open ? 'open' : 'closed'
-  if (open) play(imgs.mouth_open, [{ transform: 'scale(0.82, 0.55)' }, { transform: 'scale(1, 1)' }], 80)
+  // 배터리에서도 같은 입 움직임을 유지하며 몸과 같은 프레임에 그린다.
+  if (open) mouthPop()
+  else stopMouthPop()
   // 말풍선 대답은 글자마다 말풍선이 소리를 낸다. 여기서는 Claude Code를 따라 말할 때만.
   if (open && !bubbleOpen && local !== 'talking') sound.talk()
   let ms = open ? rand(90, 260) : rand(70, 220)
@@ -412,6 +561,22 @@ let dozing = false
 let idleSince = Date.now()
 let touched = null // 쓰다듬는 중이면 'petted', 손을 뗀 직후면 'pleased'
 let touchUntil = 0
+let react = null // 짧은 반응: 'stretch' | 'surprised' | 'greet' | 'dizzy'
+let reactUntil = 0
+let yawnUntil = 0 // 졸기 직전 하품
+let shyUntil = 0 // 연달아 쓰다듬으면 부끄
+let blushUntil = 0
+let giggleUntil = 0 // 머리를 문지르는 동안 킥킥
+let asking = false // Claude Code가 말풍선으로 고르기를 기다리는 중
+let hiddenAt = 0
+
+/** 짧은 반응을 하나 보여 준다(앞의 반응은 덮어쓴다). */
+function reactWith(next, ms) {
+  if (cfg?.reduceMotion && next !== 'surprised') return
+  react = next
+  reactUntil = Date.now() + ms
+  recompute()
+}
 
 function setLocal(next, ms, after = null) {
   local = next
@@ -441,6 +606,11 @@ function expireStates(now) {
       localUntil = 0
     }
   }
+  if (reactUntil && now >= reactUntil) {
+    expiredAt = Math.max(expiredAt, reactUntil)
+    react = null
+    reactUntil = 0
+  }
   if (touchUntil && now >= touchUntil) {
     expiredAt = Math.max(expiredAt, touchUntil)
     if (touched === 'petted') {
@@ -465,7 +635,7 @@ function scheduleStateUpdate() {
   stateTimer = null
   if (!visible || !cfg) return
   const now = Date.now()
-  const deadlines = [localUntil, touchUntil, limitUntil, claudeDeadline()]
+  const deadlines = [localUntil, touchUntil, limitUntil, claudeDeadline(), reactUntil, yawnUntil, shyUntil, giggleUntil, blushUntil]
   if (mode === 'idle' && cfg.dozeMinutes > 0) deadlines.push(idleSince + cfg.dozeMinutes * 60_000)
   const next = deadlines.filter(at => Number.isFinite(at) && at > now).sort((a, b) => a - b)[0]
   if (next) stateTimer = setTimeout(recompute, Math.min(2147483647, Math.max(1, next - now)))
@@ -496,14 +666,28 @@ function recompute() {
   if (!cfg) return
   const now = Date.now()
   const expiredAt = expireStates(now)
-  // 쓰다듬기가 가장 먼저, 그다음 펫과의 대화, 사용 제한, Claude Code 순서.
-  let next = (dragging ? 'held' : null) ?? touched ?? local ?? (Date.now() < limitUntil ? 'sleeping' : null) ?? claudeCodeMode() ?? 'idle'
+  // 쓰다듬기(킥킥·부끄 포함)가 가장 먼저, 그다음 짧은 반응, 고르기 기다림, 펫과의 대화, 사용 제한, Claude Code 순서.
+  let feel = touched
+  if (feel === 'petted' && now < giggleUntil) feel = 'giggle'
+  else if (feel === 'petted' && now < shyUntil) feel = 'shy'
+  let next = (dragging ? 'held' : null) ?? feel ?? (react && now < reactUntil ? react : null) ?? (asking ? 'asking' : null) ?? local ?? (now < limitUntil ? 'sleeping' : null) ?? claudeCodeMode() ?? 'idle'
+  // 졸다가 Claude Code나 대화 때문에 깨면 먼저 기지개부터.
+  if ((mode === 'dozing' || mode === 'yawn') && !['idle', 'held', 'petted', 'giggle', 'shy', 'sleeping'].includes(next) && !cfg.reduceMotion) {
+    react = 'stretch'
+    reactUntil = now + STRETCH_MS
+    next = 'stretch'
+  }
   if (next === 'idle') {
-    if (mode !== 'idle' && mode !== 'dozing') idleSince = Math.max(idleSince, expiredAt || Math.min(now, claudeDeadline() || now))
-    if (cfg.dozeMinutes > 0 && now - idleSince >= cfg.dozeMinutes * 60_000) dozing = true
-    if (dozing) next = 'dozing'
+    if (mode !== 'idle' && mode !== 'dozing' && mode !== 'yawn') idleSince = Math.max(idleSince, expiredAt || Math.min(now, claudeDeadline() || now))
+    if (!dozing && cfg.dozeMinutes > 0 && now - idleSince >= cfg.dozeMinutes * 60_000) {
+      dozing = true
+      // 스르르 졸기 전에 하품 한 번.
+      yawnUntil = cfg.reduceMotion || !visible ? 0 : now + YAWN_MS
+    }
+    if (dozing) next = now < yawnUntil ? 'yawn' : 'dozing'
   } else {
     dozing = false
+    yawnUntil = 0
     idleSince = Date.now()
   }
   setMode(next)
@@ -511,8 +695,15 @@ function recompute() {
 }
 
 function wake() {
+  const sleepy = mode === 'dozing' || mode === 'yawn'
   dozing = false
+  yawnUntil = 0
   idleSince = Date.now()
+  // 졸고 있었으면 기지개를 켜며 깬다.
+  if (sleepy && !cfg?.reduceMotion) {
+    react = 'stretch'
+    reactUntil = Date.now() + STRETCH_MS
+  }
   recompute()
 }
 
@@ -532,6 +723,11 @@ function pat(e) {
   const now = performance.now()
   pats = now - lastPat < PAT_COMBO_MS ? pats + 1 : 1
   lastPat = now
+  // 연달아 오래 쓰다듬으면 부끄러워서 몸을 배배 꼰다.
+  if (pats >= SHY_PATS) {
+    shyUntil = Date.now() + SHY_MS
+    blushUntil = shyUntil + PET_LINGER_MS + PLEASED_MS
+  }
   startPetting()
   window.PetAnimator.restart() // 연타할 때마다 말랑 동작이 처음부터 다시
   if (e) window.PetFx.burst(e.clientX, e.clientY, 'sparkle', 3, 0.8)
@@ -710,6 +906,26 @@ window.pet.onHello(() => {
   wake()
   if (!local) setLocal('happy', HAPPY_MS)
 })
+// Claude Code 알림 말풍선: 고르기를 기다리면 깜짝 놀랐다가 갸웃, 일이 끝나면 콧노래, 한도에 닿으면 깜짝.
+window.pet.onNotice?.(notice => {
+  if (!cfg || !notice) return
+  if (notice.kind === 'ask') {
+    const was = asking
+    asking = !!notice.on
+    if (asking && !was) {
+      wake()
+      reactWith('surprised', SURPRISE_MS)
+    } else recompute()
+  } else if (notice.kind === 'done') {
+    wake()
+    if (!local) setLocal('happy', HAPPY_MS)
+    fxAtHead('note', 3, 1.4)
+  } else if (notice.kind === 'limit') {
+    wake()
+    reactWith('surprised', SURPRISE_MS)
+    popMark('sweat', 1.0, 0.95, { life: 1400, lean: 18 })
+  }
+})
 
 // ── 고정 모드 ──────────────────────────────────────────────────────────
 // 고정 모드에서는 자리를 옮길 수 없고 마우스도 그냥 통과한다.
@@ -768,7 +984,13 @@ function settleThenEndDrag(pointerUp) {
   if (pendingMove) window.pet.drag('move', ...pendingMove)
   pendingMove = null
   window.pet.drag('end')
-  if (pointerUp) window.PetAnimator.bounce(0.05) // 착지하듯 한 번 꾹
+  // 착지하듯 한 번 꾹. 빠르게 내려놓을수록 더 크게 출렁인다.
+  if (pointerUp) window.PetAnimator.bounce(Math.min(0.09, 0.04 + dragSpeed * 0.02))
+  // 세게 흔들다 놓으면 어질어질.
+  if (pointerUp && swing > DIZZY_SWING_DEG) reactWith('dizzy', DIZZY_MS)
+  swing = 0
+  dragSpeed = 0
+  lastDrag = null
   if (cfg.reduceMotion || !visible || Math.abs(start) < 0.5) return
   bodyEl.style.transformOrigin = origin
   const at0 = performance.now()
@@ -795,8 +1017,12 @@ function stopHeldMotion() {
   bodyEl.style.removeProperty('transform-origin')
 }
 
+let swing = 0 // 들고 있는 동안 흔들린 각도의 합(도)
+let dragSpeed = 0 // 놓기 직전 손 빠르기(px/ms)
+let lastDrag = null
 function beginHeldMotion(e) {
   stopHeldMotion()
+  swing = 0
   for (const running of bodyEl.getAnimations()) running.cancel()
   if (cfg.reduceMotion || cfg.dragPhysics === false || !visible) return
   const box = petEl.getBoundingClientRect()
@@ -817,6 +1043,7 @@ function beginHeldMotion(e) {
     if (!dragging || !pendulum || !visible) return
     // Mirroring must not reverse the visual response to the user's hand.
     const angle = pendulum.step(at) * (cfg.flip ? -1 : 1)
+    swing += Math.abs(angle - heldAngle) // 얼마나 세게 흔들렸는지 쌓아 둔다(어질어질)
     heldAngle = angle
     bodyEl.style.transform = `rotate(${angle.toFixed(3)}deg)`
     if (!pendulum.isSettled()) wakeHeldMotion()
@@ -839,13 +1066,25 @@ stage.addEventListener('pointerdown', e => {
   const head = onHead(e) && (!locked || cfg.lockedPetting)
   down = { x: e.screenX, y: e.screenY, clientX: e.clientX, clientY: e.clientY, at: e.timeStamp, head, pointerId: e.pointerId, closingChat }
   dragging = false
+  rub = { x: e.screenX, y: e.screenY, at: 0, dist: 0 }
   stage.setPointerCapture(e.pointerId)
   if (head) pat(e)
 })
+let lastPeek = 0
+let rub = { x: 0, y: 0, at: 0, dist: 0 }
 stage.addEventListener('pointermove', e => {
   if (!cfg) return
   if (!down) {
-    stage.classList.toggle('over-head', onHead(e) && (!locked || cfg.lockedPetting))
+    const over = onHead(e) && (!locked || cfg.lockedPetting)
+    // 머리에 손을 올리면 쓰다듬어 줄 줄 알고 살짝 움찔(뽀용).
+    if (over && !stage.classList.contains('over-head') && e.timeStamp - lastPeek > 1500 && visible && !cfg.reduceMotion) {
+      lastPeek = e.timeStamp
+      window.PetAnimator.kick((t) => {
+        const a = 0.014 * Math.exp(-t / 0.12) * Math.sin(t * 22)
+        return { ...window.PetAnimator.ID, sx: 1 - a * 0.8, sy: 1 + a }
+      }, 420)
+    }
+    stage.classList.toggle('over-head', over)
     return
   }
   if (down.pointerId !== e.pointerId) return
@@ -855,6 +1094,17 @@ stage.addEventListener('pointermove', e => {
       lastRub = e.timeStamp
       heart()
       sound.pat()
+    }
+    // 빠르게 문지르면 간지러워서 킥킥.
+    const gap = e.timeStamp - rub.at
+    rub.dist = (gap > 600 ? 0 : rub.dist * Math.max(0, 1 - gap / 600)) + Math.hypot(e.screenX - rub.x, e.screenY - rub.y) * (rub.at ? 1 : 0)
+    rub = { x: e.screenX, y: e.screenY, at: e.timeStamp, dist: rub.dist }
+    if (rub.dist > GIGGLE_RUB_PX) {
+      const first = Date.now() >= giggleUntil
+      giggleUntil = Date.now() + GIGGLE_MS
+      blushUntil = Math.max(blushUntil, giggleUntil + PET_LINGER_MS + PLEASED_MS)
+      if (first) recompute()
+      else scheduleStateUpdate()
     }
     return
   }
@@ -869,6 +1119,12 @@ stage.addEventListener('pointermove', e => {
     beginHeldMotion(e)
   }
   if (dragging) {
+    // 놓기 직전의 손 빠르기(살짝 부드럽게): 내려놓을 때 출렁임 크기.
+    if (lastDrag && e.timeStamp > lastDrag.at) {
+      const v = Math.hypot(e.screenX - lastDrag.x, e.screenY - lastDrag.y) / (e.timeStamp - lastDrag.at)
+      dragSpeed = dragSpeed * 0.6 + Math.min(v, 4) * 0.4
+    }
+    lastDrag = { x: e.screenX, y: e.screenY, at: e.timeStamp }
     pendulum?.move(e.screenX, e.timeStamp)
     wakeHeldMotion()
     // 창은 화면이 한 번 그려질 때마다 한 번만 옮긴다. 마우스가 1초에 수백 번 움직여도 창을 그만큼
@@ -981,10 +1237,14 @@ function syncVisibility() {
   sound.setVisible(visible)
   window.PetAnimator.setPaused(!visible)
   if (!visible) {
+    hiddenAt = Date.now()
     clearTimeout(stateTimer)
     stateTimer = null
     clearTimeout(blinkTimer)
     clearTimeout(flapTimer)
+    stopMouthPop()
+    window.PetAnimator.tick?.('spinner', null)
+    spinTimer = null
     if (down) release({ type: 'hidden' })
     stopHeldMotion()
     finishSettle()
@@ -995,8 +1255,15 @@ function syncVisibility() {
       if (animation.playState === 'paused') animation.play()
     }
     pausedAnimations = []
+    // 한참 숨어 있다가(앱 창을 오랜만에 다시 열면) 나타나면 반갑게 폴짝.
+    if (hiddenAt && Date.now() - hiddenAt >= GREET_AFTER_MS && layers && !dragging && !touched && !cfg?.reduceMotion) {
+      react = 'greet'
+      reactUntil = Date.now() + GREET_MS
+    }
+    hiddenAt = 0
     recompute()
     applyFace()
+    if (!spinner.hidden) spin()
   }
 }
 
@@ -1040,6 +1307,9 @@ window.addEventListener('pagehide', () => {
   clearTimeout(stateTimer)
   clearTimeout(blinkTimer)
   clearTimeout(flapTimer)
+  stopMouthPop()
+  window.PetAnimator.tick?.('spinner', null)
+  window.PetAnimator.setPaused(true)
   stopHeldMotion()
   sound.dispose()
 })

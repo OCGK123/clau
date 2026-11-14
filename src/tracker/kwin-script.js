@@ -8,6 +8,8 @@
   var IN_TASKBAR = __TASKBAR__
   var LOOK = __LOOK__ // 눈이 마우스를 따라볼 때만 마우스 자리를 알린다
   var lastLook = 0
+  var lookX = -1e9
+  var lookY = -1e9
 
   var target = null
   var pet = null
@@ -184,12 +186,15 @@
       if (entered && !inWindow) refreshHit()
       inWindow = entered
       updateHover()
-      // 다른 앱 위에 있는 마우스 자리는 창 관리자만 안다. 1초에 30번까지만 알린다.
+      // 다른 앱 위에 있는 마우스 자리는 창 관리자만 안다. 1초에 20번까지만, 2px 넘게 움직였을 때만 알린다.
+      // (눈동자는 부드럽게 따라가므로 더 자주 알려도 눈으로는 차이가 없고, 앱만 자주 깨운다.)
       if (LOOK && pet) {
         var now = Date.now()
-        if (now - lastLook >= 33) {
+        var p = workspace.cursorPos
+        if (now - lastLook >= 50 && (Math.abs(p.x - lookX) > 2 || Math.abs(p.y - lookY) > 2)) {
           lastLook = now
-          var p = workspace.cursorPos
+          lookX = p.x
+          lookY = p.y
           callDBus(SERVICE, '/Tracker', 'local.clau.Tracker', 'Cursor', Math.round(p.x) + ',' + Math.round(p.y))
         }
       }
