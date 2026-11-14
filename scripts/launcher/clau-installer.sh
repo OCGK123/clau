@@ -195,7 +195,9 @@ install_clau() { # 설치·업데이트·고치기 모두 최신 버전을 새�
   ok=$?
   progress_end
   if [ $ok -ne 0 ]; then ui_error "설치하지 못했어요. $(tail -n 2 "$WORK/install.log" 2>/dev/null)"; return 1; fi
-  ui_info "$verb 끝났어요. 클로 $LATEST 이 켜졌어요."
+  # 처음 설치면 설치 스크립트가 클로를 설치 마법사(--setup)와 함께 연다.
+  if [ -z "$installed" ]; then ui_info "설치가 끝났어요. 화면에 뜬 설치 마법사에서 자리, 소리, 연결을 정하면 돼요."
+  else ui_info "$verb 끝났어요. 클로 $LATEST 이 켜졌어요."; fi
 }
 
 uninstall_clau() {
@@ -242,7 +244,11 @@ else
 fi
 
 case "$pick" in
-  설치) install_clau "설치가" ;;
+  설치)
+    ui_yesno "클로 $latest_text 을 설치할까요?
+1. 최신 버전을 받아 올라온 파일과 같은지 확인합니다.
+2. 이 컴퓨터에 설치합니다.
+3. 설치 마법사에서 자리, 소리, 연결을 정합니다." && install_clau "설치가" ;;
   업데이트) install_clau "업데이트가" ;;
   고치기) install_clau "다시 설치가" ;;
   삭제) uninstall_clau ;;

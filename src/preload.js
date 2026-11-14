@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('pet', {
   setSettings: patch => ipcRenderer.invoke('settings:set', patch),
   resetSettings: () => ipcRenderer.invoke('settings:reset'),
   clearChat: () => ipcRenderer.send('settings:clear-chat'),
+  finishSetup: () => ipcRenderer.send('setup:done'),
   connectMod: on => ipcRenderer.invoke('mod:connect', on),
   listModels: (provider, force) => ipcRenderer.invoke('models:list', provider, force),
   checkUpdate: () => ipcRenderer.invoke('update:check'),

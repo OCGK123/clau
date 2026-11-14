@@ -5,7 +5,7 @@ const vm = require('node:vm')
 
 // Exercise the production input functions with TESTING=false: screenshot smoke
 // tests deliberately force armed=true and cannot detect a click-through deadlock.
-function inputHarness({ nativeWayland = false, trackerError = null } = {}) {
+function inputHarness({ nativeWayland = false, trackerError = null, platform = 'linux' } = {}) {
   const source = fs.readFileSync(require.resolve('../src/main'), 'utf8')
   const start = source.indexOf('function wantsLook(')
   const end = source.indexOf('// ── 창 ─', start)
@@ -16,8 +16,8 @@ function inputHarness({ nativeWayland = false, trackerError = null } = {}) {
   const cfg = { locked: false, lookAtCursor: true, reduceMotion: false, chatEnabled: true, lockedChat: true, petting: true, lockedPetting: true }
   const state = {
     X11_FLAG: '--ozone-platform=x11', TESTING: false, LOCK_DWELL_MS: 600,
-    process: { platform: 'linux', env: { XDG_SESSION_TYPE: 'wayland' }, argv: nativeWayland ? [] : ['clau', '--ozone-platform=x11'] },
-    tracker: { kind: 'kwin', supported: true }, track: { hover: false, focused: true }, trackError: trackerError,
+    process: { platform, env: platform === 'linux' ? { XDG_SESSION_TYPE: 'wayland' } : {}, argv: nativeWayland ? [] : ['clau', '--ozone-platform=x11'] },
+    tracker: { kind: platform === 'linux' ? 'kwin' : platform === 'darwin' ? 'mac' : 'windows', supported: true }, track: { hover: false, focused: true }, trackError: trackerError,
     rendererHover: false, pointerHeld: false, dragFrom: null, expanded: false, activeNotice: null, menuOpen: false,
     armed: true, hoverSince: 0, inputTimer: null, lookTimer: null, lastInput: '', lastLook: '', onBattery: false,
     point: { x: 0, y: 0 }, shown: true,
@@ -149,4 +149,18 @@ test('KWin failure and startup timeout immediately resync pointer input and eye 
   assert.equal(silent.state.trackError, '창 관리자가 응답하지 않아요.')
   assert.ok(silent.calls.includes('input'))
   assert.ok(silent.calls.includes('look'))
+})
+
+test('macOS and Windows still catch the cursor when forwarded mouse moves never arrive', () => {
+  // 다른 앱(Claude)이 앞에 있으면 통과 중의 마우스 이동 전달이 오지 않을 수 있다.
+  // 그래도 캐릭터에 닿으면 직접 살펴서 클릭을 받아야 한다(클릭 관통 버그).
+  for (const platform of ['darwin', 'win32']) {
+    const h = inputHarness({ platform })
+    h.state.syncInput()
+    assert.equal(h.ignores.at(-1).ignore, true, `${platform}: margins pass clicks through`)
+    assert.equal(h.timers.size, 1, `${platform}: a pointer poll is scheduled`)
+    h.state.point = { x: 1800, y: 900 }
+    h.advance(450)
+    assert.equal(h.ignores.at(-1).ignore, false, `${platform}: the character receives the click`)
+  }
 })

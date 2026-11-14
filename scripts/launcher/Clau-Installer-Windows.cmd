@@ -141,6 +141,8 @@ function Install-Clau([string]$verb) {
     [IO.Compression.ZipFile]::ExtractToDirectory($zip, $work)
     Set-Progress 94
     Say '바꿔 넣는 중…'
+    # 처음 설치면 끝난 뒤 설치 마법사(--setup)를 연다.
+    $fresh = -not (Test-Path -LiteralPath $Exe)
     Stop-Clau
     robocopy (Join-Path $work 'Clau-windows-x64\Clau') $Dest /MIR /NFL /NDL /NJH /NJS /NP /R:5 /W:1 | Out-Null
     if ($LASTEXITCODE -ge 8) { throw '설치 폴더에 복사하지 못했어요. 클로가 아직 켜져 있으면 끄고 다시 해 주세요.' }
@@ -149,6 +151,11 @@ function Install-Clau([string]$verb) {
     $link.Description = '클로'
     $link.Save()
     Set-Progress 100
+    if ($fresh) {
+      Start-Process -FilePath $Exe -ArgumentList '--setup'
+      Say "설치가 끝났어요. 화면에 뜬 설치 마법사에서 자리, 소리, 연결을 정하면 돼요."
+      return
+    }
     Start-Process -FilePath $Exe
     Say "$verb 끝났어요. 클로 $($latest.version)이 켜졌어요. 시작 메뉴에서 Clau 로 다시 열 수 있어요."
   } finally {

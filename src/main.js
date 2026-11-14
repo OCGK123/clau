@@ -47,6 +47,7 @@ const MODELS_FRESH_MS = 5 * 60 * 1000
 
 let win = null
 let settingsWin = null
+let setupWin = null
 let bubbleWin = null
 let tray = null
 let layers = null
@@ -746,8 +747,10 @@ function syncInput() {
   if (!win) return
   const cfg = store.get()
   if (cfg.locked && win.isVisible() && !expanded && !activeNotice && !menuOpen && !usesKwinCursor()) inputTimer = setTimeout(syncInput, inputPollMs())
-  // 마우스 이동을 화면으로 전달할 수 없는 Linux에서는 캐릭터에 닿았는지 직접 살핀다.
-  else if (!cfg.locked && process.platform === 'linux' && win.isVisible() && !usesKwinCursor()) inputTimer = setTimeout(syncInput, inputPollMs())
+  // 캐릭터에 닿았는지 직접 살핀다(마우스와의 거리에 맞춰 드물게~자주).
+  // macOS·Windows의 forward(통과 중 마우스 이동 전달)는 다른 앱이 앞에 있을 때 오지 않을 수 있다.
+  // 그러면 창이 계속 통과 상태로 남아, 캐릭터를 눌러도 뒤의 앱 창이 눌렸다(클릭 관통 버그).
+  else if (!cfg.locked && win.isVisible() && !usesKwinCursor()) inputTimer = setTimeout(syncInput, inputPollMs())
   if (TESTING || pointerHeld || dragFrom) {
     armed = true // 누르고 있는 동안 놓치면 손을 뗀 걸 모른다
     hoverSince = 0
@@ -873,6 +876,37 @@ function openSettings() {
   settingsWin.on('closed', () => (settingsWin = null))
 }
 
+// 설치 마법사: 새로 설치했을 때 설치 도우미가 --setup 을 붙여 연다. 고른 값은 바로 설정에 저장된다.
+function openSetup() {
+  if (setupWin) return setupWin.focus()
+  setupWin = new BrowserWindow({
+    width: 680,
+    height: 500,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    center: true,
+    title: '클로 설치 마법사',
+    icon: path.join(ASSETS, 'icon.png'),
+    autoHideMenuBar: true,
+    backgroundColor: '#faf9f5',
+    show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false },
+  })
+  setupWin.setMenuBarVisibility(false)
+  setupWin.loadFile(path.join(__dirname, 'setup.html'))
+  // 그려지기 전의 빈 창이 번쩍이지 않게, 준비되면 띄운다.
+  setupWin.once('ready-to-show', () => {
+    setupWin?.show()
+    if (process.platform === 'darwin') app.focus({ steal: true }) // 설치 직후에는 Finder가 앞에 있다
+  })
+  setupWin.on('closed', () => {
+    setupWin = null
+    win?.webContents.send('pet:hello') // 마법사를 닫으면 클로가 인사하며 맞는다
+  })
+}
+
 // ── 설정 적용 ──────────────────────────────────────────────────────────
 function setAutostart(on) {
   try {
@@ -942,6 +976,7 @@ function refresh(before, cfg) {
   syncLook()
   win?.webContents.send('cfg', cfg)
   settingsWin?.webContents.send('cfg', cfg)
+  setupWin?.webContents.send('cfg', cfg)
   bubbleWin?.webContents.send('cfg', cfg)
   sendClaudeCodeState()
   return cfg
@@ -1542,6 +1577,9 @@ function wireIpc() {
     return settingsInfo()
   })
   ipcMain.on('settings:clear-chat', clearChat)
+  ipcMain.on('setup:done', e => {
+    if (e.sender === setupWin?.webContents) setupWin.close()
+  })
   ipcMain.handle('mod:connect', (_e, on) => {
     let error = null
     try {
@@ -2099,6 +2137,7 @@ async function selfTest(dir) {
  *   clau --quit     끄기
  *   clau --cleanup  지우기 전 정리: Claude Code 연결, 자동 실행, ~/.claude/clau 를 거둔다
  * 처음 켤 때 --settings 를 붙이면 설정 창도 같이 열린다.
+ *   clau --setup    설치 마법사 열기 (설치 도우미가 새로 설치한 뒤 붙인다)
  */
 /**
  * 지우기 전에 클로가 이 컴퓨터에 걸어 둔 것을 거둔다: Claude Code 연결(settings.json의 경로 한 줄),
@@ -2116,6 +2155,7 @@ function onSecondLaunch(argv) {
   if (argv.includes('--unlock')) return applySettings({ locked: false })
   if (argv.includes('--hello')) return win?.webContents.send('pet:hello')
   if (argv.includes('--update')) return installUpdate()
+  if (argv.includes('--setup')) return openSetup()
   openSettings()
 }
 
@@ -2153,7 +2193,8 @@ if (!app.requestSingleInstanceLock()) {
       try {
         if (modConnected()) copyMod()
       } catch {}
-      if (process.argv.includes('--settings')) openSettings()
+      if (process.argv.includes('--setup')) openSetup()
+      else if (process.argv.includes('--settings')) openSettings()
       if (process.argv.includes('--update')) installUpdate()
       else scheduleUpdateCheck()
     }

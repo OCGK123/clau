@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' file:" />
+    <title>클로 설치 마법사</title>
+    <link rel="stylesheet" href="setup.css" />
+  </head>
+  <body>
+    <main id="wizard" aria-live="polite">
+      <aside class="rail">
+        <img class="mascot" src="../assets/icon.png" alt="" />
+        <ol class="steps" id="steps">
+          <li data-step="0">환영</li>
+          <li data-step="1">자리</li>
+          <li data-step="2">소리와 움직임</li>
+          <li data-step="3">연결</li>
+          <li data-step="4">완료</li>
+        </ol>
+        <p class="version" id="version"></p>
+      </aside>
+
+      <section class="page" data-page="0">
+        <h1>클로 설치를 마쳤어요</h1>
+        <p class="lead">몇 가지만 정하면 바로 함께할 수 있어요. 나중에 언제든 설정에서 바꿀 수 있어요.</p>
+        <ul class="facts">
+          <li>Claude 창 옆에 붙어 살면서, 누르면 바로 질문할 수 있어요.</li>
+          <li>Claude Code가 일하는 동안 표정이 따라 바뀌어요.</li>
+          <li>머리를 쓰다듬거나 들어서 흔들 수도 있어요.</li>
+        </ul>
+      </section>
+
+      <section class="page" data-page="1" hidden>
+        <h1>어디에 있을까요?</h1>
+        <p class="lead">클로가 지낼 자리를 골라 주세요.</p>
+        <div class="choices" role="radiogroup" aria-label="자리">
+          <label class="choice"><input type="radio" name="placement" value="claude" /><span><b>Claude 창 옆 (추천)</b><small>Claude 창을 쓸 때만 보이고, 창을 옮기면 같이 움직여요.</small></span></label>
+          <label class="choice"><input type="radio" name="placement" value="free" /><span><b>화면 아무 데나</b><small>화면 위 원하는 곳에 늘 떠 있어요.</small></span></label>
+        </div>
+        <label class="field" for="size"><span>크기 <output id="sizeOut"></output></span><input type="range" id="size" min="120" max="400" step="10" /></label>
+      </section>
+
+      <section class="page" data-page="2" hidden>
+        <h1>소리와 움직임</h1>
+        <p class="lead">조용한 곳이라면 소리는 꺼 두어도 돼요.</p>
+        <label class="toggle"><span><b>효과음</b><small>머리를 누르면 꺅, 채팅을 열고 닫을 때 소리가 나요.</small></span><input type="checkbox" class="switch" id="soundEnabled" /></label>
+        <label class="field" for="soundVolume"><span>소리 크기 <output id="volumeOut"></output></span><input type="range" id="soundVolume" min="0" max="100" step="5" /></label>
+        <label class="toggle"><span><b>눈으로 마우스 따라보기</b><small>마우스가 움직이면 눈동자가 따라가요.</small></span><input type="checkbox" class="switch" id="lookAtCursor" /></label>
+        <label class="toggle"><span><b>움직임 줄이기</b><small>몸짓을 줄이고 표정만 바뀌어요. 배터리도 아낄 수 있어요.</small></span><input type="checkbox" class="switch" id="reduceMotion" /></label>
+      </section>
+
+      <section class="page" data-page="3" hidden>
+        <h1>연결과 시작</h1>
+        <p class="lead">클로가 컴퓨터와 어떻게 함께할지 정해요.</p>
+        <label class="toggle" id="ccRow"><span><b>Claude Code 따라 하기</b><small id="ccNote">Claude Code가 생각하고 말하는 동안 표정이 따라 바뀌고, 일이 끝나면 알려 줘요.</small></span><input type="checkbox" class="switch" id="followClaudeCode" /></label>
+        <label class="toggle"><span><b>컴퓨터를 켤 때 같이 시작</b><small>로그인하면 클로가 알아서 나타나요.</small></span><input type="checkbox" class="switch" id="autostart" /></label>
+        <p class="error" id="error" hidden></p>
+      </section>
+
+      <section class="page" data-page="4" hidden>
+        <h1>준비 끝!</h1>
+        <p class="lead">이제 클로와 함께할 수 있어요.</p>
+        <ul class="summary" id="summary"></ul>
+        <p class="hint">클로를 누르면 대화하고, 오른쪽 클릭하면 메뉴가 열려요. 메뉴 막대(트레이)의 클로 아이콘에서도 설정을 열 수 있어요.</p>
+      </section>
+
+      <footer class="nav">
+        <button type="button" id="skip" class="ghost">건너뛰기</button>
+        <span class="spacer"></span>
+        <button type="button" id="back" class="ghost">뒤로</button>
+        <button type="button" id="next" class="primary">시작하기</button>
+      </footer>
+    </main>
+    <script src="setup.js"></script>
+  </body>
+</html>

@@ -185,6 +185,7 @@ Windows, macOS, Linux KDE와 X11용 창 추적 코드가 포함되어 있습니�
 ```text
 clau              켜기. 이미 떠 있으면 설정 창
 clau --settings   설정 창과 함께 켜기
+clau --setup      설치 마법사 열기 (처음 설치하면 자동으로 열립니다)
 clau --unlock     고정 모드 끄기
 clau --update     새 버전이 있으면 받아서 바꾸기
 clau --quit       끄기
