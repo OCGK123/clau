@@ -1,3 +1,7 @@
+# Clau 0.7.8
+
+- macOS DMG를 열면 Clau와 Applications 폴더가 보이는 Finder 창이 바로 뜹니다. 맥 설정에 따라 더블클릭해도 디스크만 조용히 붙고 아무 창도 뜨지 않던 문제를 고쳤습니다.
+
 # Clau 0.7.7
 
 - macOS용 DMG를 릴리스에 올립니다(Apple Silicon, Intel). DMG를 열고 Clau를 Applications 폴더로 끌어다 놓기만 하면 됩니다. 설치 스크립트를 실행할 필요가 없어, 스크립트 실행 권한 때문에 설치가 막히던 문제가 사라집니다. DMG 속 앱은 맥에서 빌드하고 서명해 두었습니다.

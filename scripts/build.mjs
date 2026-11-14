@@ -89,8 +89,22 @@ function makeDmg(app, target) {
   fs.symlinkSync('/Applications', path.join(stage, 'Applications'))
   fs.copyFileSync(path.join(root, 'scripts', 'install', 'mac', '열리지 않을 때.txt'), path.join(stage, '열리지 않을 때.txt'))
   const dmg = path.join(dist, `Clau-${target.name}.dmg`)
+  const rw = path.join(dist, 'build', `Clau-${target.name}-rw.dmg`)
   fs.rmSync(dmg, { force: true })
-  execFileSync('hdiutil', ['create', '-volname', 'Clau', '-srcfolder', stage, '-fs', 'HFS+', '-format', 'UDZO', '-ov', dmg])
+  // 쓰기 가능한 이미지로 먼저 만들고, 열자마자 Finder 창이 뜨도록 표시(bless --openfolder)한 뒤 압축한다.
+  // 이 표시가 없으면 맥 설정에 따라 더블클릭해도 디스크만 조용히 붙고 아무 창도 안 뜬다.
+  execFileSync('hdiutil', ['create', '-volname', 'Clau', '-srcfolder', stage, '-fs', 'HFS+', '-format', 'UDRW', '-ov', rw])
+  const mount = fs.mkdtempSync(path.join(dist, 'build', 'mnt-'))
+  execFileSync('hdiutil', ['attach', rw, '-mountpoint', mount, '-nobrowse', '-noautoopen', '-quiet'])
+  try {
+    execFileSync('bless', ['--folder', mount, '--openfolder', mount])
+  } catch (err) {
+    console.warn(`(bless 실패: DMG를 열어도 창이 자동으로 뜨지 않을 수 있어요) ${err.message}`)
+  } finally {
+    execFileSync('hdiutil', ['detach', mount, '-quiet'])
+  }
+  execFileSync('hdiutil', ['convert', rw, '-format', 'UDZO', '-imagekey', 'zlib-level=9', '-o', dmg])
+  fs.rmSync(rw, { force: true })
   console.log(`→ ${path.relative(root, dmg)}  (${(fs.statSync(dmg).size / 1e6).toFixed(0)} MB)`)
 }
 
