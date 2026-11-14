@@ -12,6 +12,12 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const dist = path.join(root, 'dist')
 
+// (아래 빌드 반복문보다 먼저 정해 둔다: 반복문이 makeDmg를 부른다.)
+// HFS+ 볼륨 헤더는 볼륨 앞 1024바이트 뒤에 있고, finderInfo(8칸 x 4바이트)는 그 안 80바이트째부터다.
+// finderInfo[2]는 '붙이면 열 폴더'의 번호다. 루트 폴더 번호는 언제나 2.
+const HFS_HEADER = 1024
+const OPEN_FOLDER_AT = HFS_HEADER + 80 + 2 * 4
+
 const TARGETS = {
   linux: [{ platform: 'linux', arch: 'x64', name: 'linux-x64', install: 'linux' }],
   win: [{ platform: 'win32', arch: 'x64', name: 'windows-x64', install: 'windows' }],
@@ -81,10 +87,6 @@ function adhocSign(app) {
   execFileSync('codesign', ['--verify', '--deep', '--strict', app])
 }
 
-// HFS+ 볼륨 헤더는 볼륨 앞 1024바이트 뒤에 있고, finderInfo(8칸 x 4바이트)는 그 안 80바이트째부터다.
-// finderInfo[2]는 '붙이면 열 폴더'의 번호다. 루트 폴더 번호는 언제나 2.
-const HFS_HEADER = 1024
-const OPEN_FOLDER_AT = HFS_HEADER + 80 + 2 * 4
 function markOpenFolder(image) {
   // 파일 시스템을 붙이지 않고 장치만 붙인다(-nomount). -layout NONE이라 장치의 0바이트가 곧 볼륨의 시작이다.
   const out = execFileSync('hdiutil', ['attach', image, '-nomount', '-noverify', '-noautoopen'], { encoding: 'utf8' })
