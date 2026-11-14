@@ -86,9 +86,10 @@ test('unzip keeps executable bits and safe links, and refuses paths that escape'
   ]))
   await extract(file, path.join(dir, 'out'))
   assert.equal(fs.readFileSync(path.join(dir, 'out/app/run'), 'utf8'), '#!/bin/sh\necho hi\n')
-  assert.equal(fs.statSync(path.join(dir, 'out/app/run')).mode & 0o111, 0o111)
+  // Windows에는 실행 권한 비트가 없다. Windows용 zip에는 링크도 없다(맥 앱에만 있다).
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(dir, 'out/app/run')).mode & 0o111, 0o111)
   assert.equal(fs.readFileSync(path.join(dir, 'out/app/empty.txt'), 'utf8'), '')
-  assert.equal(fs.readlinkSync(path.join(dir, 'out/app/Current')), 'run')
+  if (process.platform !== 'win32') assert.equal(fs.readlinkSync(path.join(dir, 'out/app/Current')), 'run')
   for (const evil of [{ name: '../escape', data: 'x' }, { name: '/abs', data: 'x' }, { name: 'app/link', link: '../../outside' }]) {
     fs.writeFileSync(file, makeZip([evil]))
     await assert.rejects(extract(file, path.join(dir, 'evil')), { code: 'BAD_ZIP' })

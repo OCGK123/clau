@@ -1,5 +1,6 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
+const path = require('node:path')
 const models = require('../src/models')
 
 const codexCatalog = {
@@ -17,7 +18,7 @@ test('Codex list keeps only pickable models in the CLI order', () => {
 })
 
 test('Codex models come from the login cache first, then from the CLI', async () => {
-  const cached = await models.codex({ home: '/h', env: {}, readFile: async file => { assert.equal(file, '/h/.codex/models_cache.json'); return JSON.stringify(codexCatalog) } })
+  const cached = await models.codex({ home: '/h', env: {}, readFile: async file => { assert.equal(file, path.join('/h', '.codex', 'models_cache.json')); return JSON.stringify(codexCatalog) } })
   assert.equal(cached.source, 'account')
   assert.equal(cached.models.length, 2)
   const asked = await models.codex({

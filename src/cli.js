@@ -13,7 +13,7 @@ function findExecutable(name, custom, options = {}) {
   const platform = options.platform || process.platform
   const env = options.env || process.env
   const home = options.home || os.homedir()
-  const p = platform === 'win32' ? path.win32 : path
+  const p = platform === 'win32' ? path.win32 : path.posix
   const isFile = options.isFile || (file => {
     try {
       if (!fs.statSync(file).isFile()) return false
@@ -42,7 +42,7 @@ function findExecutable(name, custom, options = {}) {
 
 function commandFor(bin, name, options = {}) {
   const platform = options.platform || process.platform
-  const p = platform === 'win32' ? path.win32 : path
+  const p = platform === 'win32' ? path.win32 : path.posix
   const exists = options.exists || fs.existsSync
   const node = options.node || process.execPath
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
